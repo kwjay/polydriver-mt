@@ -1,5 +1,10 @@
 #include "protocol_handler.h"
-#include <cstring>
+#ifdef ARDUINO
+  #include <Arduino.h>
+#else
+  #include <cstring>
+  #include <stdint.h>
+#endif
 
 uint8_t ProtocolHandler::calculateCRC8(const uint8_t* data, uint8_t len) {
   uint8_t crc = 0x00;
