@@ -56,6 +56,7 @@ CommandEvent ProtocolHandler::processFrame() {
 
   union FloatBytes { float fVal; uint8_t bVal[4]; } converter;
   CommandEvent resultEvent = CommandEvent::NONE;
+  static constexpr uint8_t ERR_BAD_LENGTH = 0x02;
 
   switch (rxCommand) {
     case CMD_SET_SPEED:
@@ -64,6 +65,9 @@ CommandEvent ProtocolHandler::processFrame() {
         parsedSpeed = converter.fVal;
         sendResponse(RESP_ACK, nullptr, 0);
         resultEvent = CommandEvent::SPEED_UPDATED;
+      } else {
+        uint8_t err = ERR_BAD_LENGTH;
+        sendResponse(RESP_NACK, &err, 1);
       }
       break;
 
@@ -80,6 +84,9 @@ CommandEvent ProtocolHandler::processFrame() {
         
         sendResponse(RESP_ACK, nullptr, 0);
         resultEvent = CommandEvent::PID_UPDATED;
+      } else {
+        uint8_t err = ERR_BAD_LENGTH;
+        sendResponse(RESP_NACK, &err, 1);
       }
       break;
 
@@ -96,37 +103,41 @@ CommandEvent ProtocolHandler::processFrame() {
 
 CommandEvent ProtocolHandler::processByte(uint8_t b) {
   CommandEvent eventOccurred = CommandEvent::NONE;
-      switch (currentState) {
-        case RxState::WAIT_STX:
-            if (b == STX) currentState = RxState::READ_ID;
-            break;
-        case RxState::READ_ID:
-            currentState = (b == MY_ID) ? RxState::READ_CMD : RxState::WAIT_STX;
-            break;
-        case RxState::READ_CMD:
-            rxCommand = b;
-            currentState = RxState::READ_LEN;
-            break;
-        case RxState::READ_LEN:
-            rxLength = b;
-            rxIndex = 0;
-            currentState = (rxLength > 0) ? RxState::READ_PAYLOAD : RxState::READ_CRC;
-            break;
-        case RxState::READ_PAYLOAD:
-            if (rxIndex < sizeof(rxPayload)) rxPayload[rxIndex++] = b;
-            if (rxIndex >= rxLength) currentState = RxState::READ_CRC;
-            break;
-        case RxState::READ_CRC:
-            rxCrc = b;
-            currentState = RxState::WAIT_ETX;
-            break;
-        case RxState::WAIT_ETX:
-            if (b == ETX) {
-                eventOccurred = processFrame();
-            }
-            currentState = RxState::WAIT_STX;
-            break;
-      }
+    switch (currentState) {
+      case RxState::WAIT_STX:
+        if (b == STX) currentState = RxState::READ_ID;
+        break;
+      case RxState::READ_ID:
+        currentState = (b == MY_ID) ? RxState::READ_CMD : RxState::WAIT_STX;
+        break;
+      case RxState::READ_CMD:
+        rxCommand = b;
+        currentState = RxState::READ_LEN;
+        break;
+      case RxState::READ_LEN:
+        rxLength = b;
+        rxIndex = 0;
+        if (rxLength > sizeof(rxPayload)) {
+          currentState = RxState::WAIT_STX;
+        } else {
+          currentState = (rxLength > 0) ? RxState::READ_PAYLOAD : RxState::READ_CRC;
+        }
+        break;
+      case RxState::READ_PAYLOAD:
+        if (rxIndex < sizeof(rxPayload)) rxPayload[rxIndex++] = b;
+        if (rxIndex >= rxLength) currentState = RxState::READ_CRC;
+        break;
+      case RxState::READ_CRC:
+        rxCrc = b;
+        currentState = RxState::WAIT_ETX;
+        break;
+      case RxState::WAIT_ETX:
+        if (b == ETX) {
+            eventOccurred = processFrame();
+        }
+        currentState = RxState::WAIT_STX;
+        break;
+    }
   return eventOccurred;
 }
 

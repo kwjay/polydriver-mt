@@ -109,7 +109,7 @@ void test_protocol_invalid_crc_sends_nack() {
 
 void test_protocol_wrong_id_ignored() {
 	ProtocolHandler handler;
-	
+	handler.setTxCallback(dummyTxCallback);
 	handler.processByte(STX);
 	handler.processByte(0x99);
 	
@@ -117,8 +117,36 @@ void test_protocol_wrong_id_ignored() {
 	handler.processByte(0);
 	handler.processByte(0x00);
 	CommandEvent evt = handler.processByte(ETX);
-	
 	TEST_ASSERT_EQUAL(static_cast<int>(CommandEvent::NONE), static_cast<int>(evt));
+}
+
+
+
+void test_protocol_recovers_from_corrupt_length_byte() {
+	ProtocolHandler handler;
+	handler.setTxCallback(dummyTxCallback);
+	handler.processByte(STX);
+	handler.processByte(MY_ID);
+	handler.processByte(CMD_REQ_STAT);
+	handler.processByte(200); 
+
+	for (uint8_t i = 0; i < 50; i++) {
+		CommandEvent evt = handler.processByte(i);
+		TEST_ASSERT_EQUAL(static_cast<int>(CommandEvent::NONE), static_cast<int>(evt));
+	}
+	CommandEvent evt = pushValidFrame(handler, CMD_REQ_STAT, nullptr, 0);
+	TEST_ASSERT_EQUAL(static_cast<int>(CommandEvent::TELEMETRY_REQUESTED), static_cast<int>(evt));
+}
+
+void test_protocol_bad_payload_length_sends_nack() {
+	ProtocolHandler handler;
+	handler.setTxCallback(dummyTxCallback);
+	uint8_t payload[2] = {0x00, 0x01};
+	CommandEvent evt = pushValidFrame(handler, CMD_SET_SPEED, payload, 2);
+
+	TEST_ASSERT_EQUAL(static_cast<int>(CommandEvent::NONE), static_cast<int>(evt));
+	TEST_ASSERT_TRUE(txLength > 0);
+	TEST_ASSERT_EQUAL_HEX8(RESP_NACK, txBuffer[2]);
 }
 
 int main(void) {
@@ -127,5 +155,7 @@ int main(void) {
 	RUN_TEST(test_protocol_set_pid);
 	RUN_TEST(test_protocol_invalid_crc_sends_nack);
 	RUN_TEST(test_protocol_wrong_id_ignored);
+	RUN_TEST(test_protocol_recovers_from_corrupt_length_byte);
+	RUN_TEST(test_protocol_bad_payload_length_sends_nack);
 	return UNITY_END();
 }

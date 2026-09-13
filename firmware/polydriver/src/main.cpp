@@ -31,8 +31,6 @@ void setup() {
   protocol.setTxCallback(serialTransmit);
   encoder.init();
   pwm.init();
-  ema.setAlpha(0.2f);
-  pid.setTunings(pid.getKp(), pid.getKi(), pid.getKd());
 }
 
 unsigned long previousMicros = 0;
@@ -42,50 +40,52 @@ void loop() {
     uint8_t incomingByte = Serial.read();
     CommandEvent event = protocol.processByte(incomingByte);
     if (event != CommandEvent::NONE) {
-        switch (event) {
-          case CommandEvent::SPEED_UPDATED:
-            targetSpeed = protocol.getSpeed();
-            regulateSignal = (targetSpeed > 0.0f);
-            
-            if (!regulateSignal) {
-              pid.reset();
-              ema.reset();
-              pwm.setDutyCycle(0);
-            }
-            break;
-            
-          case CommandEvent::PID_UPDATED: {
-            const PidSettings& newPid = protocol.getPidSettings();
-            pid.setTunings(newPid.kp, newPid.ki, newPid.kd);
-            break;
+      switch (event) {
+        case CommandEvent::SPEED_UPDATED:
+          targetSpeed = protocol.getSpeed();
+          regulateSignal = (targetSpeed > 0.0f);
+          
+          if (!regulateSignal) {
+            pid.reset();
+            ema.reset();
+            pwm.setDutyCycle(0);
           }
-            
-          case CommandEvent::TELEMETRY_REQUESTED: {
-            float rawFreq = encoder.getSignalFrequency();
-            uint8_t currentPwm = pwm.getDutyCycle();
-            uint8_t stalledStatus = encoder.getIsStalled() ? 1 : 0;
-            protocol.sendTelemetry(rawFreq, currentPwm, stalledStatus);
-            break;
-          }
-            
-          case CommandEvent::SYNC_REQUESTED:
-            protocol.sendSettings(pid.getKp(), pid.getKi(), pid.getKd(), targetSpeed);
-            break;
-          default:
-            break;
+          break;
+          
+        case CommandEvent::PID_UPDATED: {
+          const PidSettings& newPid = protocol.getPidSettings();
+          pid.setTunings(newPid.kp, newPid.ki, newPid.kd);
+          break;
         }
+          
+        case CommandEvent::TELEMETRY_REQUESTED: {
+          float rawFreq = encoder.getSignalFrequency();
+          uint8_t currentPwm = pwm.getDutyCycle();
+          uint8_t stalledStatus = encoder.getIsStalled() ? 1 : 0;
+          protocol.sendTelemetry(rawFreq, currentPwm, stalledStatus);
+          break;
+        }
+          
+        case CommandEvent::SYNC_REQUESTED:
+          protocol.sendSettings(pid.getKp(), pid.getKi(), pid.getKd(), targetSpeed);
+          break;
+        
+        default:
+          break;
       }
+    }
   }
 
   unsigned long currentMicros = micros();
-  if (currentMicros - previousMicros >= sampleTime) {
+  unsigned long elapsedMicros = currentMicros - previousMicros;
+  if (elapsedMicros >= sampleTime) {
     previousMicros = currentMicros;
 
     float rawFrequency = encoder.getSignalFrequency();
     float filteredFrequency = ema.filter(rawFrequency);
 
     if (regulateSignal) {
-      float dt = static_cast<float>(sampleTime) / 1000000.0f;
+      float dt = static_cast<float>(elapsedMicros) / 1000000.0f;
       float pidOutput = pid.calculate(targetSpeed, filteredFrequency, dt);
       pwm.setDutyCycle(static_cast<int16_t>(pidOutput));
     }
