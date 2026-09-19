@@ -7,7 +7,6 @@ from .link_layer import ProtocolParser, build_frame
 logger = logging.getLogger(__name__)
 
 class SerialWorkerError(Exception):
-	"""Custom exception for errors in the SerialWorker thread."""
 	pass
 
 class SerialWorker:

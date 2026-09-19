@@ -12,9 +12,6 @@ TEST_LOGS_DIR = os.path.join(os.path.dirname(__file__), "test_logs")
 
 
 class _FakeSession:
-	"""Stands in for PolydriverSession: test_session.py already covers the
-	real session's behaviour, this only checks that the shell parses
-	arguments correctly and reports success/failure the right way."""
 
 	def __init__(self):
 		self._targets: dict[int, DispenserState] = {}
@@ -25,7 +22,6 @@ class _FakeSession:
 		self.raise_on_command: Exception | None = None
 		self.sink = None
 
-		# --- timed runs & calibration -----------------------------------
 		self.run_for_calls = []
 		self.stop_run_calls = []
 		self.set_rate_calls = []
@@ -82,7 +78,6 @@ class _FakeSession:
 	def detach_telemetry_sink(self):
 		self.sink = None
 
-	# --- timed runs & calibration --------------------------------------
 
 	def run_for(self, target_id, duration_s, speed=None, rate_g_s=None):
 		if self.raise_on_command:

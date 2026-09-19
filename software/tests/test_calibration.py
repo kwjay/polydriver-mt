@@ -110,9 +110,9 @@ class TestDeadbandSpeed(unittest.TestCase):
 			self.store.deadband_speed(1)
 
 	def test_lowest_producing_speed_is_reported(self):
-		self.store.add_measurement(1, speed=5.0, grams=0.0, duration_s=10.0)   # deadband: nothing came out
-		self.store.add_measurement(1, speed=10.0, grams=0.0, duration_s=10.0)  # still nothing
-		self.store.add_measurement(1, speed=20.0, grams=8.0, duration_s=10.0)  # first speed that produces output
+		self.store.add_measurement(1, speed=5.0, grams=0.0, duration_s=10.0)
+		self.store.add_measurement(1, speed=10.0, grams=0.0, duration_s=10.0)
+		self.store.add_measurement(1, speed=20.0, grams=8.0, duration_s=10.0)
 		self.assertEqual(self.store.deadband_speed(1), 20.0)
 
 	def test_none_when_every_tested_speed_produced_nothing(self):
@@ -151,7 +151,7 @@ class TestCalibrationPersistence(unittest.TestCase):
 		self.assertAlmostEqual(point.rate_g_s, 1.0)
 
 	def test_load_of_a_missing_file_returns_an_empty_store(self):
-		store = CalibrationStore.load(self.path)  # self.path does not exist yet
+		store = CalibrationStore.load(self.path)
 		with self.assertRaises(CalibrationError):
 			store.points(1)
 

@@ -1,28 +1,3 @@
-"""Per-feeder flow-rate calibration.
-
-There's no in-line flow sensor anywhere in this system - the only thing
-the firmware measures is rotational speed (the same "speed" value passed
-to PolydriverSession.set_speed, tracked by the PID). To actually dose a
-target amount for a gradient, something needs to map that speed to an
-output rate in grams/second, and that mapping is different per feeder
-because each screw geometry moves a different amount of material per
-revolution. So a calibration measurement is taken the only way it can
-be, given no sensor: hold one speed for a known duration, weigh what
-came out, and record (speed, grams, duration_s) here.
-
-Repeat measurements at the same speed are kept, not overwritten, and
-averaged into that speed's CalibrationPoint - manual weighing has real
-scatter (scale settling, scooping residue, timing slop), and a single
-one-shot reading can't tell a good measurement from a fluke the way a
-few averaged repeats can. CalibrationPoint.spread_g_s reports how much
-those repeats actually disagreed, so a suspiciously wide spread is
-visible rather than silently averaged away.
-
-Deliberately no extrapolation: speed_for_rate()/rate_for_speed() both
-raise CalibrationError outside the range that has actually been
-measured, rather than guessing at a speed nobody has verified is safe
-or even achievable for that screw.
-"""
 import json
 import os
 import threading
@@ -31,15 +6,11 @@ from typing import Dict, List, Optional
 
 
 class CalibrationError(Exception):
-	"""No calibration exists yet for a target, there aren't enough
-	distinct speeds to interpolate, or a requested rate/speed falls
-	outside the range that's actually been measured."""
+ ...
 
 
 @dataclass(frozen=True)
 class Measurement:
-	"""One raw manually-weighed calibration run: this target held `speed`
-	for `duration_s` seconds and produced `grams` of output."""
 	speed: float
 	grams: float
 	duration_s: float

@@ -1,4 +1,4 @@
-from enum import Enum, auto
+from enum import Enum, IntEnum, auto
 
 STX = 0x02
 ETX = 0x03
@@ -23,3 +23,10 @@ class RxState(Enum):
 	READ_PAYLOAD = auto()
 	READ_CRC = auto()
 	WAIT_ETX = auto()
+
+
+# Mirrors NackReason in firmware/polydriver/lib/algorithms/protocol_handler.h.
+class NackReason(IntEnum):
+	BAD_CRC = 0x01
+	BAD_LENGTH = 0x02
+	UNKNOWN_COMMAND = 0x03

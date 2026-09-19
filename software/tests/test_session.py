@@ -71,7 +71,7 @@ class TestPolydriverSession(unittest.TestCase):
 		import threading
 		threading.Thread(target=respond, daemon=True).start()
 
-		self.session.set_speed(1, 12.5)  # should not raise
+		self.session.set_speed(1, 12.5)
 		self.assertIsNotNone(self.session.get_state(1))
 
 	def test_set_speed_nack_raises_session_error(self):
@@ -88,7 +88,7 @@ class TestPolydriverSession(unittest.TestCase):
 
 	def test_set_speed_no_response_times_out(self):
 		with self.assertRaises(SessionError):
-			self.session.set_speed(1, 12.5)  # nothing ever answers -> timeout
+			self.session.set_speed(1, 12.5)
 
 	def test_request_status_records_state_and_notifies_telemetry_sink(self):
 		import struct
@@ -123,7 +123,6 @@ class TestPolydriverSession(unittest.TestCase):
 		self.assertIsNotNone(state)
 		assert state is not None
 		self.assertEqual(state.last_status, report)
-		# no set_speed(3, ...) was ever issued, so nothing was commanded yet.
 		self.assertEqual(recorded, [(3, report, None)])
 
 	def test_set_speed_records_the_commanded_setpoint_for_later_status_reads(self):
@@ -204,8 +203,6 @@ class TestPolydriverSession(unittest.TestCase):
 		assert state is not None
 		self.assertEqual(state.last_settings, report)
 		self.assertEqual(settings_calls, [(2, report)])
-		# a settings read is not a status read - it must not also show up
-		# as one.
 		self.assertEqual(status_calls, [])
 
 	def test_add_and_remove_target(self):

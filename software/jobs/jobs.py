@@ -16,17 +16,14 @@ from .base_job import BaseJob
 
 
 class JobError(Exception):
-    """Base class for errors raised while interpreting a job's response."""
+    ...
 
 
 class JobNackError(JobError):
-    """The device rejected the frame outright (RESP_NACK), e.g. a CRC mismatch
-    it detected on its end. Retrying the exact same bytes won't help, so
-    JobManager treats this as a final failure rather than retrying it."""
+    ...
 
 
 class UnexpectedResponseError(JobError):
-    """The device replied with a command byte this job doesn't expect."""
 
     def __init__(self, expected: tuple[int, ...], got: int):
         self.expected = expected

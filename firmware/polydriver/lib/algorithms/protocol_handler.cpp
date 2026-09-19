@@ -21,16 +21,18 @@ uint8_t ProtocolHandler::calculateCRC8(const uint8_t* data, uint8_t len) {
 }
 
 void ProtocolHandler::sendResponse(uint8_t cmd, const uint8_t* payload, uint8_t len) {
-  uint8_t crcData[20];
+  if (len > MAX_RESPONSE_PAYLOAD_LEN) return;
+
+  uint8_t crcData[3 + MAX_RESPONSE_PAYLOAD_LEN];
   crcData[0] = MY_ID;
   crcData[1] = cmd;
   crcData[2] = len;
   for(uint8_t i = 0; i < len; i++) crcData[3+i] = payload[i];
 
   uint8_t crc = calculateCRC8(crcData, 3 + len);
-  uint8_t txBuffer[24]; 
+  uint8_t txBuffer[FRAME_OVERHEAD + MAX_RESPONSE_PAYLOAD_LEN];
   uint8_t idx = 0;
-  
+
   txBuffer[idx++] = STX;
   for(uint8_t i = 0; i < 3 + len; i++) txBuffer[idx++] = crcData[i];
   txBuffer[idx++] = crc;
@@ -41,22 +43,25 @@ void ProtocolHandler::sendResponse(uint8_t cmd, const uint8_t* payload, uint8_t 
   }
 }
 
+void ProtocolHandler::sendNack(NackReason reason) {
+  uint8_t err = static_cast<uint8_t>(reason);
+  sendResponse(RESP_NACK, &err, 1);
+}
+
 CommandEvent ProtocolHandler::processFrame() {
-  uint8_t crcBuffer[20];
-  crcBuffer[0] = MY_ID;
+  uint8_t crcBuffer[3 + MAX_PAYLOAD_LEN];
+  crcBuffer[0] = rxId;
   crcBuffer[1] = rxCommand;
   crcBuffer[2] = rxLength;
   memcpy(&crcBuffer[3], rxPayload, rxLength);
 
   if (calculateCRC8(crcBuffer, 3 + rxLength) != rxCrc) {
-    uint8_t err = 0x01;
-    sendResponse(RESP_NACK, &err, 1);
-    return CommandEvent::NONE; 
+    sendNack(NackReason::BAD_CRC);
+    return CommandEvent::NONE;
   }
 
   union FloatBytes { float fVal; uint8_t bVal[4]; } converter;
   CommandEvent resultEvent = CommandEvent::NONE;
-  static constexpr uint8_t ERR_BAD_LENGTH = 0x02;
 
   switch (rxCommand) {
     case CMD_SET_SPEED:
@@ -66,8 +71,7 @@ CommandEvent ProtocolHandler::processFrame() {
         sendResponse(RESP_ACK, nullptr, 0);
         resultEvent = CommandEvent::SPEED_UPDATED;
       } else {
-        uint8_t err = ERR_BAD_LENGTH;
-        sendResponse(RESP_NACK, &err, 1);
+        sendNack(NackReason::BAD_LENGTH);
       }
       break;
 
@@ -77,27 +81,39 @@ CommandEvent ProtocolHandler::processFrame() {
         memcpy(kp.bVal, &rxPayload[0], 4);
         memcpy(ki.bVal, &rxPayload[4], 4);
         memcpy(kd.bVal, &rxPayload[8], 4);
-        
+
         parsedPid.kp = kp.fVal;
         parsedPid.ki = ki.fVal;
         parsedPid.kd = kd.fVal;
-        
+
         sendResponse(RESP_ACK, nullptr, 0);
         resultEvent = CommandEvent::PID_UPDATED;
       } else {
-        uint8_t err = ERR_BAD_LENGTH;
-        sendResponse(RESP_NACK, &err, 1);
+        sendNack(NackReason::BAD_LENGTH);
       }
       break;
 
     case CMD_REQ_STAT:
-      resultEvent = CommandEvent::TELEMETRY_REQUESTED;
+      if (rxLength == 0) {
+        resultEvent = CommandEvent::TELEMETRY_REQUESTED;
+      } else {
+        sendNack(NackReason::BAD_LENGTH);
+      }
       break;
+
     case CMD_REQ_SETTINGS:
-      resultEvent = CommandEvent::SYNC_REQUESTED;
+      if (rxLength == 0) {
+        resultEvent = CommandEvent::SYNC_REQUESTED;
+      } else {
+        sendNack(NackReason::BAD_LENGTH);
+      }
+      break;
+
+    default:
+      sendNack(NackReason::UNKNOWN_COMMAND);
       break;
   }
-  
+
   return resultEvent;
 }
 
@@ -108,6 +124,7 @@ CommandEvent ProtocolHandler::processByte(uint8_t b) {
         if (b == STX) currentState = RxState::READ_ID;
         break;
       case RxState::READ_ID:
+        rxId = b;
         currentState = (b == MY_ID) ? RxState::READ_CMD : RxState::WAIT_STX;
         break;
       case RxState::READ_CMD:
@@ -117,14 +134,14 @@ CommandEvent ProtocolHandler::processByte(uint8_t b) {
       case RxState::READ_LEN:
         rxLength = b;
         rxIndex = 0;
-        if (rxLength > sizeof(rxPayload)) {
+        if (rxLength > MAX_PAYLOAD_LEN) {
           currentState = RxState::WAIT_STX;
         } else {
           currentState = (rxLength > 0) ? RxState::READ_PAYLOAD : RxState::READ_CRC;
         }
         break;
       case RxState::READ_PAYLOAD:
-        if (rxIndex < sizeof(rxPayload)) rxPayload[rxIndex++] = b;
+        if (rxIndex < MAX_PAYLOAD_LEN) rxPayload[rxIndex++] = b;
         if (rxIndex >= rxLength) currentState = RxState::READ_CRC;
         break;
       case RxState::READ_CRC:

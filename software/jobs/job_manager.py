@@ -21,12 +21,11 @@ class SerialLike(Protocol):
 
 
 class JobTimeoutError(Exception):
-	"""No response arrived for a job within its timeout, and its retry
-	budget (BaseJob.record_attempt) is exhausted."""
+ ...
 
 
 class LinkLostError(Exception):
-	"""The underlying serial transport reported a fatal I/O error."""
+ ...
 
 
 @dataclass

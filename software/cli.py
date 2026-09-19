@@ -16,7 +16,6 @@ class PolydriverShell(cmd.Cmd):
 		self.session = session
 		self._telemetry_logger: TelemetryLogger | None = None
 
-	# --- connection ---------------------------------------------------------
 
 	def do_connect(self, arg):
 		"connect <port> [baudrate]  -- open the serial port"
@@ -37,7 +36,6 @@ class PolydriverShell(cmd.Cmd):
 		self.session.disconnect()
 		print("disconnected", file=self.stdout)
 
-	# --- target tracking ------------------------------------------------
 
 	def do_add(self, arg):
 		"add <target_id> [name]  -- start tracking a dispenser"
@@ -51,11 +49,6 @@ class PolydriverShell(cmd.Cmd):
 		print(f"tracking target {state.target_id} ({state.name})", file=self.stdout)
 
 	def _resolve_target_id(self, token: str) -> int:
-		"""Accept either a numeric target_id or the friendly name given to
-		'add', so a dispenser named on the way in doesn't have to be
-		remembered by number everywhere else. A token that parses as an
-		integer is always treated as an id first - a target named the same
-		as another target's id has to be addressed by its id."""
 		try:
 			return int(token, 0)
 		except ValueError:
@@ -94,7 +87,6 @@ class PolydriverShell(cmd.Cmd):
 			if state.last_error:
 				print(f"    last error: {state.last_error}", file=self.stdout)
 
-	# --- commands ------------------------------------------------------------
 
 	def do_speed(self, arg):
 		"speed <target_id|name> <value>  -- set a dispenser's target speed"
@@ -155,7 +147,6 @@ class PolydriverShell(cmd.Cmd):
 		except (SessionError, ValueError) as exc:
 			print(f"failed: {exc}", file=self.stdout)
 
-	# --- timed runs & flow-rate calibration -------------------------------
 
 	def do_run(self, arg):
 		"run <target_id|name> <speed> <duration_s>  -- run at a fixed speed, then auto-stop"
@@ -278,7 +269,6 @@ class PolydriverShell(cmd.Cmd):
 		except (SessionError, ValueError, CalibrationError) as exc:
 			print(f"failed: {exc}", file=self.stdout)
 
-	# --- telemetry logging -----------------------------------------------
 
 	def do_log(self, arg):
 		"log start <path> | log stop  -- record polled telemetry to a CSV file"
@@ -311,7 +301,6 @@ class PolydriverShell(cmd.Cmd):
 		else:
 			print("usage: log start <path> | log stop", file=self.stdout)
 
-	# --- exit ----------------------------------------------------------------
 
 	def do_quit(self, arg):
 		"quit  -- disconnect and exit"

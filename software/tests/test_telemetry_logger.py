@@ -14,7 +14,7 @@ class TestTelemetryLogger(unittest.TestCase):
 		os.makedirs(TEST_LOGS_DIR, exist_ok=True)
 		fd, self.path = tempfile.mkstemp(suffix=".csv", dir=TEST_LOGS_DIR)
 		os.close(fd)
-		os.remove(self.path)  # let TelemetryLogger create it fresh
+		os.remove(self.path)
 		self.addCleanup(lambda: os.path.exists(self.path) and os.remove(self.path))
 
 	def _read_rows(self):
@@ -42,9 +42,7 @@ class TestTelemetryLogger(unittest.TestCase):
 		self.assertEqual(rows[0]["frequency"], "10.5")
 		self.assertEqual(rows[0]["pwm"], "100")
 		self.assertEqual(rows[0]["is_stalled"], "0")
-		# no target_speed was passed -> written as an empty cell, not "None".
 		self.assertEqual(rows[0]["target_speed"], "")
-		# a status row carries no settings data.
 		self.assertEqual(rows[0]["kp"], "")
 		self.assertEqual(rows[0]["firmware_speed"], "")
 		self.assertEqual(rows[1]["target_id"], "2")
@@ -74,7 +72,6 @@ class TestTelemetryLogger(unittest.TestCase):
 		self.assertEqual(row["ki"], "0.2")
 		self.assertEqual(row["kd"], "0.05")
 		self.assertEqual(row["firmware_speed"], "10.0")
-		# a settings row carries no status data.
 		self.assertEqual(row["frequency"], "")
 		self.assertEqual(row["pwm"], "")
 		self.assertEqual(row["is_stalled"], "")

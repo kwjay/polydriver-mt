@@ -24,8 +24,7 @@ DEFAULT_POLL_INTERVAL = 0.5
 
 
 class SessionError(Exception):
-	"""Raised for any session-level failure: not connected, a job that
-	never completed in time, or a job that failed outright."""
+ ...
 
 
 class TelemetrySink(Protocol):
@@ -105,7 +104,6 @@ class PolydriverSession:
 		self._active_runs: Dict[int, _ActiveRun] = {}
 		self._active_runs_lock = threading.Lock()
 
-	# --- connection lifecycle -------------------------------------------------
 
 	@property
 	def is_connected(self) -> bool:
@@ -148,7 +146,6 @@ class PolydriverSession:
 	def __exit__(self, exc_type, exc_val, exc_tb):
 		self.disconnect()
 
-	# --- telemetry logging ------------------------------------------------
 
 	def attach_telemetry_sink(self, sink: TelemetrySink) -> None:
 		self._telemetry_sink = sink
@@ -156,7 +153,6 @@ class PolydriverSession:
 	def detach_telemetry_sink(self) -> None:
 		self._telemetry_sink = None
 
-	# --- target tracking ----------------------------------------------------
 
 	def add_target(self, target_id: int, name: Optional[str] = None) -> DispenserState:
 		with self._targets_lock:
@@ -179,7 +175,6 @@ class PolydriverSession:
 		with self._targets_lock:
 			return self._targets.get(target_id)
 
-	# --- commands (blocking) -------------------------------------------------
 
 	def set_speed(self, target_id: int, speed: float) -> None:
 		job = SetSpeedJob(target_id, speed, timeout=self.job_timeout, retries=self.job_retries)
@@ -210,7 +205,6 @@ class PolydriverSession:
 			self._telemetry_sink.record_settings(target_id, report)
 		return report
 
-	# --- calibration ---------------------------------------------------------
 
 	def record_calibration_point(
 		self, target_id: int, speed: float, grams: float, duration_s: float
@@ -240,7 +234,6 @@ class PolydriverSession:
 		self.set_speed(target_id, speed)
 		return speed
 
-	# --- timed runs ------------------------------------------------------
 
 	def run_for(
 		self,
@@ -296,7 +289,6 @@ class PolydriverSession:
 		for target_id in target_ids:
 			self._cancel_run(target_id, wait=True)
 
-	# --- internals -------------------------------------------------------
 
 	def _budget(self) -> float:
 		return self.job_timeout * (self.job_retries + 1) + 0.5
