@@ -1,15 +1,18 @@
 import csv
 import os
+import shutil
 import tempfile
 import unittest
 
 from control.telemetry_logger import TelemetryLogger
 from jobs.jobs import SettingsReport, StatusReport
 
+TEST_LOGS_DIR = os.path.join(os.path.dirname(__file__), "test_logs")
 
 class TestTelemetryLogger(unittest.TestCase):
 	def setUp(self):
-		fd, self.path = tempfile.mkstemp(suffix=".csv")
+		os.makedirs(TEST_LOGS_DIR, exist_ok=True)
+		fd, self.path = tempfile.mkstemp(suffix=".csv", dir=TEST_LOGS_DIR)
 		os.close(fd)
 		os.remove(self.path)  # let TelemetryLogger create it fresh
 		self.addCleanup(lambda: os.path.exists(self.path) and os.remove(self.path))
@@ -104,8 +107,9 @@ class TestTelemetryLogger(unittest.TestCase):
 		self.assertEqual(len(self._read_rows()), 2)
 
 	def test_creates_missing_parent_directories(self):
-		nested_path = os.path.join(os.path.dirname(self.path), "nested", "subdir", "run.csv")
-		self.addCleanup(lambda: os.path.exists(nested_path) and os.remove(nested_path))
+		nested_root = os.path.join(os.path.dirname(self.path), "nested")
+		nested_path = os.path.join(nested_root, "subdir", "run.csv")
+		self.addCleanup(lambda: shutil.rmtree(nested_root, ignore_errors=True))
 
 		logger = TelemetryLogger(nested_path)
 		logger.record_status(1, StatusReport(frequency=1.0, pwm=1, is_stalled=False), timestamp=1.0)

@@ -12,10 +12,6 @@ FAKE_RESP = 0xBB
 
 
 class _FakeJob(BaseJob):
-	"""A minimal BaseJob used to exercise JobManager mechanics (dispatch,
-	matching, retries, timeouts) without depending on the real protocol
-	commands in jobs.py."""
-
 	def __init__(self, target_id=1, timeout=0.05, retries=3, response_command=FAKE_RESP):
 		super().__init__(target_id, timeout, retries)
 		self.response_command = response_command
@@ -36,9 +32,6 @@ class _FakeJob(BaseJob):
 
 
 class _FakeWorker:
-	"""Stands in for a SerialWorker: JobManager only ever touches rx_queue
-	and send_command, so that's all this fake needs to provide."""
-
 	def __init__(self):
 		self.rx_queue: "queue.Queue" = queue.Queue()
 		self.sent: list[tuple[int, int, bytes]] = []
@@ -48,7 +41,6 @@ class _FakeWorker:
 
 
 def wait_until(predicate, timeout=1.0, interval=0.01) -> bool:
-	"""Poll predicate() until it's truthy or timeout elapses."""
 	deadline = time.time() + timeout
 	while time.time() < deadline:
 		if predicate():
@@ -117,7 +109,6 @@ class TestJobManager(unittest.TestCase):
 		errors = []
 		self.manager.submit(job, on_error=errors.append)
 
-		# retries=1 -> the initial send plus exactly one retry, then give up.
 		self.assertTrue(wait_until(lambda: len(self.worker.sent) == 2, timeout=2.0))
 		self.assertTrue(wait_until(lambda: len(errors) == 1, timeout=2.0))
 		self.assertIsInstance(errors[0], JobTimeoutError)
@@ -133,12 +124,6 @@ class TestJobManager(unittest.TestCase):
 		self.assertEqual(len(self.worker.sent), 1)
 
 	def test_jobs_are_processed_one_at_a_time_in_submission_order(self):
-		# timeout is set generously longer than the sleep() below on purpose:
-		# _FakeJob's default timeout (0.05s) is the same order of magnitude
-		# as that sleep, so scheduling jitter could let job1's own retry
-		# timer fire before the assertion runs, which looks identical to
-		# "job2 was dispatched early" (both add a second entry to
-		# worker.sent) - this was an observed source of test flakiness.
 		job1 = _FakeJob(target_id=1, timeout=1.0)
 		job2 = _FakeJob(target_id=2, timeout=1.0)
 		self.manager.submit(job1)

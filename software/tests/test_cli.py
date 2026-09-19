@@ -1,9 +1,14 @@
 import io
+import os
 import unittest
 
 from cli import PolydriverShell
+from control.calibration import CalibrationError
 from control.session import DispenserState, SessionError
 from jobs.jobs import SettingsReport, StatusReport
+
+
+TEST_LOGS_DIR = os.path.join(os.path.dirname(__file__), "test_logs")
 
 
 class _FakeSession:
@@ -19,6 +24,20 @@ class _FakeSession:
 		self.next_settings = SettingsReport(kp=1.0, ki=2.0, kd=3.0, speed=4.0)
 		self.raise_on_command: Exception | None = None
 		self.sink = None
+
+		# --- timed runs & calibration -----------------------------------
+		self.run_for_calls = []
+		self.stop_run_calls = []
+		self.set_rate_calls = []
+		self.calibration_point_calls = []
+		self.save_calibration_calls = []
+		self.load_calibration_calls = []
+		self._calibration_points: dict[int, list] = {}
+		self._calibration_deadband: dict[int, float] = {}
+		self._raw_rates: dict[tuple[int, float], list] = {}
+		self.run_for_result: float | None = None
+		self.set_rate_result: float | None = None
+		self.stop_run_result = False
 
 	def connect(self, port: str, baudrate: int = 115200):
 		pass
@@ -62,6 +81,63 @@ class _FakeSession:
 
 	def detach_telemetry_sink(self):
 		self.sink = None
+
+	# --- timed runs & calibration --------------------------------------
+
+	def run_for(self, target_id, duration_s, speed=None, rate_g_s=None):
+		if self.raise_on_command:
+			raise self.raise_on_command
+		self.run_for_calls.append((target_id, duration_s, speed, rate_g_s))
+		if self.run_for_result is not None:
+			return self.run_for_result
+		return speed if speed is not None else rate_g_s
+
+	def stop_run(self, target_id):
+		self.stop_run_calls.append(target_id)
+		return self.stop_run_result
+
+	def set_rate(self, target_id, rate_g_s):
+		if self.raise_on_command:
+			raise self.raise_on_command
+		self.set_rate_calls.append((target_id, rate_g_s))
+		return self.set_rate_result if self.set_rate_result is not None else rate_g_s
+
+	def record_calibration_point(self, target_id, speed, grams, duration_s):
+		if self.raise_on_command:
+			raise self.raise_on_command
+		self.calibration_point_calls.append((target_id, speed, grams, duration_s))
+
+		class _Point:
+			def __init__(self, speed, rate_g_s, repeats, spread_g_s):
+				self.speed = speed
+				self.rate_g_s = rate_g_s
+				self.repeats = repeats
+				self.spread_g_s = spread_g_s
+
+		raw = self._raw_rates.setdefault((target_id, speed), [])
+		raw.append(grams / duration_s)
+		point = _Point(
+			speed=speed,
+			rate_g_s=sum(raw) / len(raw),
+			repeats=len(raw),
+			spread_g_s=(max(raw) - min(raw)) if len(raw) > 1 else 0.0,
+		)
+		self._calibration_points[target_id] = [
+			p for p in self._calibration_points.get(target_id, []) if p.speed != speed
+		] + [point]
+		return point
+
+	def calibration_points(self, target_id):
+		return self._calibration_points.get(target_id, [])
+
+	def calibration_deadband(self, target_id):
+		return self._calibration_deadband.get(target_id)
+
+	def save_calibration(self, path):
+		self.save_calibration_calls.append(path)
+
+	def load_calibration(self, path):
+		self.load_calibration_calls.append(path)
 
 
 def make_shell():
@@ -122,8 +198,6 @@ class TestPolydriverShell(unittest.TestCase):
 		self.assertIn("kp=1.0", out.getvalue())
 
 	def test_a_numeric_token_is_always_treated_as_an_id_not_a_name(self):
-		# add_target(9, "1") names target 9 "1" - a later "speed 1 ..." must
-		# still mean "the id 1", not "the target named 1".
 		shell, session, out = make_shell()
 		session.add_target(9, "1")
 		shell.onecmd("speed 1 12.5")
@@ -148,7 +222,6 @@ class TestPolydriverShell(unittest.TestCase):
 		shell, session, out = make_shell()
 		shell.onecmd("status 1")
 		text = out.getvalue()
-		# frequency/pwm/stalled from _FakeSession.next_status
 		self.assertIn("frequency=1.00", text)
 		self.assertIn("pwm=2", text)
 		self.assertIn("stalled=False", text)
@@ -190,10 +263,10 @@ class TestPolydriverShell(unittest.TestCase):
 	def test_log_start_creates_missing_directories_and_attaches_the_sink(self):
 		import tempfile
 		import shutil
-		import os
 
+		os.makedirs(TEST_LOGS_DIR, exist_ok=True)
 		shell, session, out = make_shell()
-		tmp_dir = tempfile.mkdtemp()
+		tmp_dir = tempfile.mkdtemp(dir=TEST_LOGS_DIR)
 		self.addCleanup(lambda: shutil.rmtree(tmp_dir, ignore_errors=True))
 		path = os.path.join(tmp_dir, "nested", "run.csv")
 
@@ -207,17 +280,141 @@ class TestPolydriverShell(unittest.TestCase):
 
 	def test_log_start_with_an_unusable_path_fails_cleanly(self):
 		import tempfile
-		import os
 
+		os.makedirs(TEST_LOGS_DIR, exist_ok=True)
 		shell, session, out = make_shell()
-		# a regular file can't be used as a directory component of a path
-		fd, blocking_file = tempfile.mkstemp()
+		fd, blocking_file = tempfile.mkstemp(dir=TEST_LOGS_DIR)
 		os.close(fd)
 		self.addCleanup(lambda: os.path.exists(blocking_file) and os.remove(blocking_file))
 
 		bad_path = os.path.join(blocking_file, "sub", "run.csv")
 		shell.onecmd(f"log start {bad_path}")
 		self.assertIn("failed to open log file", out.getvalue())
+
+
+class TestPolydriverShellTimedRunsAndCalibration(unittest.TestCase):
+	def test_run_passes_speed_and_duration_through(self):
+		shell, session, out = make_shell()
+		shell.onecmd("run 1 20 5")
+		self.assertEqual(session.run_for_calls, [(1, 5.0, 20.0, None)])
+		self.assertIn("running at speed=20.0 for 5.0s", out.getvalue())
+
+	def test_run_wrong_arg_count_prints_usage(self):
+		shell, session, out = make_shell()
+		shell.onecmd("run 1 20")
+		self.assertEqual(session.run_for_calls, [])
+		self.assertIn("usage:", out.getvalue())
+
+	def test_dose_passes_rate_and_duration_through(self):
+		shell, session, out = make_shell()
+		session.run_for_result = 42.0
+		shell.onecmd("dose 1 0.5 5")
+		self.assertEqual(session.run_for_calls, [(1, 5.0, None, 0.5)])
+		self.assertIn("dosing at 0.5g/s (speed=42.000) for 5.0s", out.getvalue())
+
+	def test_dose_reports_calibration_error_cleanly(self):
+		shell, session, out = make_shell()
+		session.raise_on_command = CalibrationError("no calibration recorded yet for target 1")
+		shell.onecmd("dose 1 0.5 5")
+		self.assertIn("failed:", out.getvalue())
+		self.assertIn("no calibration recorded", out.getvalue())
+
+	def test_rate_sets_speed_via_calibration(self):
+		shell, session, out = make_shell()
+		session.set_rate_result = 17.5
+		shell.onecmd("rate 1 0.5")
+		self.assertEqual(session.set_rate_calls, [(1, 0.5)])
+		self.assertIn("ok (speed=17.500)", out.getvalue())
+
+	def test_stop_cancels_the_run_and_forces_speed_zero(self):
+		shell, session, out = make_shell()
+		shell.onecmd("stop 1")
+		self.assertEqual(session.stop_run_calls, [1])
+		self.assertEqual(session.speed_calls, [(1, 0.0)])
+		self.assertIn("ok", out.getvalue())
+
+	def test_stop_accepts_a_target_name(self):
+		shell, session, out = make_shell()
+		shell.onecmd("add 9 pump-a")
+		shell.onecmd("stop pump-a")
+		self.assertEqual(session.stop_run_calls, [9])
+		self.assertEqual(session.speed_calls, [(9, 0.0)])
+
+	def test_calibrate_add_records_a_point(self):
+		shell, session, out = make_shell()
+		shell.onecmd("calibrate add 1 20 10 5")
+		self.assertEqual(session.calibration_point_calls, [(1, 20.0, 5.0, 10.0)])
+		self.assertIn("recorded speed=20.0 -> 0.5000 g/s", out.getvalue())
+
+	def test_calibrate_add_wrong_arg_count_prints_usage(self):
+		shell, session, out = make_shell()
+		shell.onecmd("calibrate add 1 20 10")
+		self.assertEqual(session.calibration_point_calls, [])
+		self.assertIn("usage:", out.getvalue())
+
+	def test_calibrate_add_reports_the_average_and_spread_on_a_repeat(self):
+		shell, session, out = make_shell()
+		shell.onecmd("calibrate add 1 20 10 9")   # 0.9 g/s
+		out.truncate(0)
+		out.seek(0)
+		shell.onecmd("calibrate add 1 20 10 11")  # 1.1 g/s -> avg 1.0, spread 0.2
+		text = out.getvalue()
+		self.assertIn("recorded speed=20.0 -> 1.0000 g/s", text)
+		self.assertIn("avg of 2, spread 0.2000 g/s", text)
+
+	def test_calibrate_add_a_single_measurement_does_not_mention_an_average(self):
+		shell, session, out = make_shell()
+		shell.onecmd("calibrate add 1 20 10 5")
+		self.assertNotIn("avg of", out.getvalue())
+
+	def test_calibrate_show_lists_points_and_deadband(self):
+		shell, session, out = make_shell()
+		shell.onecmd("calibrate add 1 20 10 5")
+		out.truncate(0)
+		out.seek(0)
+		session._calibration_deadband[1] = 20.0
+
+		shell.onecmd("calibrate show 1")
+		text = out.getvalue()
+		self.assertIn("speed=20.0 -> 0.5000 g/s", text)
+		self.assertIn("lowest speed known to produce output: 20.0", text)
+
+	def test_calibrate_show_includes_repeats_and_spread(self):
+		shell, session, out = make_shell()
+		shell.onecmd("calibrate add 1 20 10 9")
+		shell.onecmd("calibrate add 1 20 10 11")
+		out.truncate(0)
+		out.seek(0)
+
+		shell.onecmd("calibrate show 1")
+		self.assertIn("avg of 2, spread 0.2000 g/s", out.getvalue())
+
+	def test_calibrate_show_with_no_points_says_so(self):
+		shell, session, out = make_shell()
+		shell.onecmd("calibrate show 1")
+		self.assertIn("no calibration points recorded", out.getvalue())
+
+	def test_calibrate_save_and_load(self):
+		shell, session, out = make_shell()
+		shell.onecmd("calibrate save cal.json")
+		self.assertEqual(session.save_calibration_calls, ["cal.json"])
+		self.assertIn("saved calibration to cal.json", out.getvalue())
+
+		out.truncate(0)
+		out.seek(0)
+		shell.onecmd("calibrate load cal.json")
+		self.assertEqual(session.load_calibration_calls, ["cal.json"])
+		self.assertIn("loaded calibration from cal.json", out.getvalue())
+
+	def test_calibrate_with_no_subcommand_prints_usage(self):
+		shell, session, out = make_shell()
+		shell.onecmd("calibrate")
+		self.assertIn("usage:", out.getvalue())
+
+	def test_calibrate_with_an_unknown_subcommand_prints_usage(self):
+		shell, session, out = make_shell()
+		shell.onecmd("calibrate frobnicate 1")
+		self.assertIn("usage:", out.getvalue())
 
 
 if __name__ == "__main__":

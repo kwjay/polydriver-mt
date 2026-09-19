@@ -77,9 +77,6 @@ class JobManager:
 		on_success: Optional[OnSuccess] = None,
 		on_error: Optional[OnError] = None,
 	) -> None:
-		"""Queue a job for dispatch. Non-blocking: the job is sent, retried
-		and matched to its response on the manager's own background thread,
-		and the outcome is reported through on_success/on_error from there."""
 		self._pending.put(_PendingJob(job, on_success, on_error))
 
 	@property
@@ -180,9 +177,6 @@ class JobManager:
 				pending.on_success(result)
 
 	def _fail_all(self, error: Exception):
-		"""The serial link itself has died: give up on the active job and
-		drain the queue, notifying every submitter rather than leaving them
-		waiting forever."""
 		self._finish_active(error=error)
 		while True:
 			try:

@@ -1,6 +1,5 @@
 #include "pid_regulator.h"
-PIDRegulator::PIDRegulator(float p, float i, float d)
-  : kp(p), ki(i), kd(d) {}
+PIDRegulator::PIDRegulator(float p, float i, float d) : kp(p), ki(i), kd(d) {}
 
 float PIDRegulator::calculate(float setpoint, float measuredValue, float dt) {
   if (dt <= 0.0f) return 0.0f;

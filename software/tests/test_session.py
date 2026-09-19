@@ -1,18 +1,17 @@
 import queue
+import struct
+import threading
 import time
 import unittest
 
 from comms.constants import RESP_ACK, RESP_NACK, RESP_STATUS, RESP_SETTINGS
 from comms.link_layer import ResponseFrame
+from control.calibration import CalibrationError, CalibrationStore
 from jobs.job_manager import JobManager
 from control.session import PolydriverSession, SessionError
 
 
 class _FakeWorker:
-	"""Same shape SerialWorker exposes to JobManager: an rx_queue and a
-	send_command(). Good enough to drive a PolydriverSession end to end
-	without a real serial port."""
-
 	def __init__(self):
 		self.rx_queue: "queue.Queue" = queue.Queue()
 		self.sent: list[tuple[int, int, bytes]] = []
@@ -34,16 +33,31 @@ def wait_until(predicate, timeout=2.0, interval=0.01) -> bool:
 	return predicate()
 
 
+def auto_ack(worker, max_count=None):
+	stop_event = threading.Event()
+
+	def _loop():
+		answered = 0
+		while not stop_event.is_set():
+			if max_count is not None and answered >= max_count:
+				return
+			if len(worker.sent) > answered:
+				target_id, cmd, payload = worker.sent[answered]
+				worker.rx_queue.put(ResponseFrame(source_id=target_id, command=RESP_ACK, length=0, payload=b""))
+				answered += 1
+			else:
+				time.sleep(0.005)
+
+	thread = threading.Thread(target=_loop, daemon=True)
+	thread.start()
+	return stop_event
+
+
 class TestPolydriverSession(unittest.TestCase):
 	def setUp(self):
 		self.worker = _FakeWorker()
 		self.manager = JobManager(self.worker, poll_interval=0.01)
 		self.manager.start()
-
-		# poll_interval is set long on purpose: most tests drive commands
-		# directly and don't want the background poller racing them for
-		# worker.sent entries. test_poll_loop_updates_tracked_targets below
-		# uses its own short-interval session instead.
 		self.session = PolydriverSession(poll_interval=10.0, job_timeout=0.05, job_retries=1)
 		self.session._attach(self.worker, self.manager)
 		self.addCleanup(self.session.disconnect)
@@ -242,6 +256,147 @@ class TestPolydriverSessionPolling(unittest.TestCase):
 
 		self.assertTrue(wait_until(has_status))
 		self.assertTrue(wait_until(lambda: len(worker.sent) >= 2), "poller did not run more than once")
+
+
+class TestPolydriverSessionTimedRuns(unittest.TestCase):
+	def setUp(self):
+		self.worker = _FakeWorker()
+		self.manager = JobManager(self.worker, poll_interval=0.01)
+		self.manager.start()
+		self.session = PolydriverSession(poll_interval=10.0, job_timeout=0.05, job_retries=1)
+		self.session._attach(self.worker, self.manager)
+		self.addCleanup(self.session.disconnect)
+
+	def test_run_for_sets_speed_immediately_and_returns_the_resolved_speed(self):
+		auto_ack(self.worker)
+		resolved = self.session.run_for(1, duration_s=0.05, speed=20.0)
+		self.assertEqual(resolved, 20.0)
+		self.assertTrue(wait_until(lambda: len(self.worker.sent) >= 1))
+		_, _, payload = self.worker.sent[0]
+		self.assertAlmostEqual(struct.unpack("<f", payload)[0], 20.0)
+
+	def test_run_for_auto_stops_to_zero_after_the_duration(self):
+		auto_ack(self.worker)
+		self.session.run_for(1, duration_s=0.05, speed=20.0)
+		self.assertTrue(wait_until(lambda: len(self.worker.sent) >= 2, timeout=2.0))
+		_, _, payload = self.worker.sent[1]
+		self.assertAlmostEqual(struct.unpack("<f", payload)[0], 0.0)
+
+	def test_run_for_rejects_neither_speed_nor_rate(self):
+		with self.assertRaises(ValueError):
+			self.session.run_for(1, duration_s=1.0)
+
+	def test_run_for_rejects_both_speed_and_rate(self):
+		with self.assertRaises(ValueError):
+			self.session.run_for(1, duration_s=1.0, speed=1.0, rate_g_s=1.0)
+
+	def test_run_for_rejects_nonpositive_duration(self):
+		with self.assertRaises(ValueError):
+			self.session.run_for(1, duration_s=0.0, speed=1.0)
+
+	def test_run_for_with_a_rate_resolves_speed_via_calibration(self):
+		self.session.calibration.add_measurement(1, speed=10.0, grams=0.0, duration_s=10.0)
+		self.session.calibration.add_measurement(1, speed=30.0, grams=20.0, duration_s=10.0)  # 2.0 g/s at speed 30
+
+		auto_ack(self.worker)
+		resolved = self.session.run_for(1, duration_s=0.05, rate_g_s=1.0)
+		self.assertAlmostEqual(resolved, 20.0)
+
+	def test_run_for_with_an_uncalibrated_rate_raises_and_does_not_command_anything(self):
+		auto_ack(self.worker)
+		with self.assertRaises(CalibrationError):
+			self.session.run_for(1, duration_s=0.05, rate_g_s=1.0)
+		self.assertEqual(self.worker.sent, [])
+
+	def test_stop_run_cancels_before_the_duration_elapses(self):
+		auto_ack(self.worker)
+		self.session.run_for(1, duration_s=5.0, speed=20.0)
+		self.assertTrue(wait_until(lambda: len(self.worker.sent) >= 1))
+
+		started = time.time()
+		cancelled = self.session.stop_run(1)
+		elapsed = time.time() - started
+
+		self.assertTrue(cancelled)
+		self.assertLess(elapsed, 1.0, "stop_run should not block for anywhere near the full duration")
+		self.assertTrue(wait_until(lambda: len(self.worker.sent) >= 2))
+		_, _, payload = self.worker.sent[1]
+		self.assertAlmostEqual(struct.unpack("<f", payload)[0], 0.0)
+
+	def test_stop_run_with_no_active_run_returns_false(self):
+		self.assertFalse(self.session.stop_run(1))
+
+	def test_a_new_run_for_supersedes_an_earlier_one_for_the_same_target(self):
+		auto_ack(self.worker)
+		self.session.run_for(1, duration_s=5.0, speed=20.0)
+		self.assertTrue(wait_until(lambda: len(self.worker.sent) >= 1))
+		resolved = self.session.run_for(1, duration_s=0.05, speed=40.0)
+		self.assertEqual(resolved, 40.0)
+		self.assertTrue(wait_until(lambda: len(self.worker.sent) >= 3))
+		_, _, cancelled_payload = self.worker.sent[1]
+		self.assertAlmostEqual(struct.unpack("<f", cancelled_payload)[0], 0.0)
+		_, _, restarted_payload = self.worker.sent[2]
+		self.assertAlmostEqual(struct.unpack("<f", restarted_payload)[0], 40.0)
+
+		self.assertTrue(wait_until(lambda: len(self.worker.sent) >= 4))
+		_, _, last_payload = self.worker.sent[-1]
+		self.assertAlmostEqual(struct.unpack("<f", last_payload)[0], 0.0)
+
+	def test_disconnect_stops_an_active_run_instead_of_abandoning_it(self):
+		auto_ack(self.worker)
+		self.session.run_for(1, duration_s=5.0, speed=20.0)
+		self.assertTrue(wait_until(lambda: len(self.worker.sent) >= 1))
+
+		self.session.disconnect()
+		self.assertTrue(wait_until(lambda: len(self.worker.sent) >= 2))
+		_, _, payload = self.worker.sent[1]
+		self.assertAlmostEqual(struct.unpack("<f", payload)[0], 0.0)
+
+
+class TestPolydriverSessionCalibration(unittest.TestCase):
+	def setUp(self):
+		self.worker = _FakeWorker()
+		self.manager = JobManager(self.worker, poll_interval=0.01)
+		self.manager.start()
+		self.session = PolydriverSession(poll_interval=10.0, job_timeout=0.05, job_retries=1)
+		self.session._attach(self.worker, self.manager)
+		self.addCleanup(self.session.disconnect)
+
+	def test_record_calibration_point_is_reflected_in_calibration_points(self):
+		point = self.session.record_calibration_point(1, speed=20.0, grams=10.0, duration_s=10.0)
+		self.assertAlmostEqual(point.rate_g_s, 1.0)
+		self.assertEqual(self.session.calibration_points(1), [point])
+
+	def test_calibration_points_for_an_unknown_target_is_empty_not_an_error(self):
+		self.assertEqual(self.session.calibration_points(99), [])
+
+	def test_calibration_deadband_for_an_unknown_target_is_none_not_an_error(self):
+		self.assertIsNone(self.session.calibration_deadband(99))
+
+	def test_set_rate_resolves_speed_via_calibration_and_commands_it(self):
+		self.session.calibration.add_measurement(1, speed=10.0, grams=0.0, duration_s=10.0)
+		self.session.calibration.add_measurement(1, speed=30.0, grams=20.0, duration_s=10.0)  # 2.0 g/s at speed 30
+
+		auto_ack(self.worker)
+		resolved = self.session.set_rate(1, 1.0)
+		self.assertAlmostEqual(resolved, 20.0)
+		self.assertTrue(wait_until(lambda: len(self.worker.sent) >= 1))
+
+	def test_save_and_load_calibration_round_trips_through_the_session(self):
+		import os
+		import tempfile
+
+		fd, path = tempfile.mkstemp(suffix=".json")
+		os.close(fd)
+		os.remove(path)
+		self.addCleanup(lambda: os.path.exists(path) and os.remove(path))
+
+		self.session.record_calibration_point(1, speed=20.0, grams=10.0, duration_s=10.0)
+		self.session.save_calibration(path)
+
+		fresh = PolydriverSession()
+		fresh.load_calibration(path)
+		self.assertEqual(len(fresh.calibration_points(1)), 1)
 
 
 if __name__ == "__main__":

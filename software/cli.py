@@ -1,14 +1,8 @@
-"""Terminal control shell for the Polydriver bus.
-
-A thin interactive layer over control.session.PolydriverSession: it turns
-typed commands into session calls and prints the result. This is meant
-for manual testing and PID tuning against real hardware without needing
-the (future) GUI; a GUI built later talks to the same PolydriverSession.
-"""
 import argparse
 import cmd
 import shlex
 
+from control.calibration import CalibrationError, CalibrationStore
 from control.session import PolydriverSession, SessionError, SessionLike
 from control.telemetry_logger import TelemetryLogger
 
@@ -161,26 +155,154 @@ class PolydriverShell(cmd.Cmd):
 		except (SessionError, ValueError) as exc:
 			print(f"failed: {exc}", file=self.stdout)
 
+	# --- timed runs & flow-rate calibration -------------------------------
+
+	def do_run(self, arg):
+		"run <target_id|name> <speed> <duration_s>  -- run at a fixed speed, then auto-stop"
+		parts = shlex.split(arg)
+		if len(parts) != 3:
+			print("usage: run <target_id|name> <speed> <duration_s>", file=self.stdout)
+			return
+		try:
+			target_id = self._resolve_target_id(parts[0])
+			speed = float(parts[1])
+			duration_s = float(parts[2])
+			self.session.run_for(target_id, duration_s, speed=speed)
+			print(f"running at speed={speed} for {duration_s}s, will auto-stop", file=self.stdout)
+		except (SessionError, ValueError, CalibrationError) as exc:
+			print(f"failed: {exc}", file=self.stdout)
+
+	def do_dose(self, arg):
+		"dose <target_id|name> <rate_g_s> <duration_s>  -- run at a calibrated flow rate, then auto-stop"
+		parts = shlex.split(arg)
+		if len(parts) != 3:
+			print("usage: dose <target_id|name> <rate_g_s> <duration_s>", file=self.stdout)
+			return
+		try:
+			target_id = self._resolve_target_id(parts[0])
+			rate_g_s = float(parts[1])
+			duration_s = float(parts[2])
+			resolved_speed = self.session.run_for(target_id, duration_s, rate_g_s=rate_g_s)
+			print(
+				f"dosing at {rate_g_s}g/s (speed={resolved_speed:.3f}) for {duration_s}s, will auto-stop",
+				file=self.stdout,
+			)
+		except (SessionError, ValueError, CalibrationError) as exc:
+			print(f"failed: {exc}", file=self.stdout)
+
+	def do_rate(self, arg):
+		"rate <target_id|name> <rate_g_s>  -- set speed via calibration to hit a flow rate (runs until stopped)"
+		parts = shlex.split(arg)
+		if len(parts) != 2:
+			print("usage: rate <target_id|name> <rate_g_s>", file=self.stdout)
+			return
+		try:
+			target_id = self._resolve_target_id(parts[0])
+			rate_g_s = float(parts[1])
+			resolved_speed = self.session.set_rate(target_id, rate_g_s)
+			print(f"ok (speed={resolved_speed:.3f})", file=self.stdout)
+		except (SessionError, ValueError, CalibrationError) as exc:
+			print(f"failed: {exc}", file=self.stdout)
+
+	def do_stop(self, arg):
+		"stop <target_id|name>  -- cancel any timed run and immediately set speed to 0"
+		parts = shlex.split(arg)
+		if len(parts) != 1:
+			print("usage: stop <target_id|name>", file=self.stdout)
+			return
+		try:
+			target_id = self._resolve_target_id(parts[0])
+			self.session.stop_run(target_id)
+			self.session.set_speed(target_id, 0.0)
+			print("ok", file=self.stdout)
+		except (SessionError, ValueError) as exc:
+			print(f"failed: {exc}", file=self.stdout)
+
+	def do_calibrate(self, arg):
+		"""calibrate add <target_id|name> <speed> <duration_s> <grams>
+		calibrate show <target_id|name>
+		calibrate save <path>
+		calibrate load <path>"""
+		parts = shlex.split(arg)
+		usage = (
+			"usage: calibrate add <target_id|name> <speed> <duration_s> <grams> "
+			"| calibrate show <target_id|name> | calibrate save <path> | calibrate load <path>"
+		)
+		if not parts:
+			print(usage, file=self.stdout)
+			return
+		subcmd, rest = parts[0], parts[1:]
+		try:
+			if subcmd == "add":
+				if len(rest) != 4:
+					print("usage: calibrate add <target_id|name> <speed> <duration_s> <grams>", file=self.stdout)
+					return
+				target_id = self._resolve_target_id(rest[0])
+				speed, duration_s, grams = float(rest[1]), float(rest[2]), float(rest[3])
+				point = self.session.record_calibration_point(target_id, speed, grams, duration_s)
+				detail = f"recorded speed={speed} -> {point.rate_g_s:.4f} g/s"
+				if point.repeats > 1:
+					detail += f" (avg of {point.repeats}, spread {point.spread_g_s:.4f} g/s)"
+				print(detail, file=self.stdout)
+			elif subcmd == "show":
+				if len(rest) != 1:
+					print("usage: calibrate show <target_id|name>", file=self.stdout)
+					return
+				target_id = self._resolve_target_id(rest[0])
+				points = self.session.calibration_points(target_id)
+				if not points:
+					print(f"no calibration points recorded for target {target_id}", file=self.stdout)
+					return
+				for point in points:
+					line = f"  speed={point.speed} -> {point.rate_g_s:.4f} g/s"
+					if point.repeats > 1:
+						line += f" (avg of {point.repeats}, spread {point.spread_g_s:.4f} g/s)"
+					print(line, file=self.stdout)
+				deadband = self.session.calibration_deadband(target_id)
+				if deadband is not None:
+					print(f"lowest speed known to produce output: {deadband}", file=self.stdout)
+			elif subcmd == "save":
+				if len(rest) != 1:
+					print("usage: calibrate save <path>", file=self.stdout)
+					return
+				self.session.save_calibration(rest[0])
+				print(f"saved calibration to {rest[0]}", file=self.stdout)
+			elif subcmd == "load":
+				if len(rest) != 1:
+					print("usage: calibrate load <path>", file=self.stdout)
+					return
+				self.session.load_calibration(rest[0])
+				print(f"loaded calibration from {rest[0]}", file=self.stdout)
+			else:
+				print(usage, file=self.stdout)
+		except (SessionError, ValueError, CalibrationError) as exc:
+			print(f"failed: {exc}", file=self.stdout)
+
 	# --- telemetry logging -----------------------------------------------
 
 	def do_log(self, arg):
 		"log start <path> | log stop  -- record polled telemetry to a CSV file"
-		parts = shlex.split(arg)
-		if not parts:
+		arg = arg.strip()
+		if not arg:
 			print("usage: log start <path> | log stop", file=self.stdout)
 			return
-		if parts[0] == "start":
-			if len(parts) != 2:
+		subcmd, _, rest = arg.partition(" ")
+		rest = rest.strip()
+		if subcmd == "start":
+			if not rest:
 				print("usage: log start <path>", file=self.stdout)
 				return
+			path = rest
+			if len(path) >= 2 and path[0] == path[-1] and path[0] in ("'", '"'):
+				path = path[1:-1]
 			try:
-				self._telemetry_logger = TelemetryLogger(parts[1])
+				self._telemetry_logger = TelemetryLogger(path)
 			except OSError as exc:
 				print(f"failed to open log file: {exc}", file=self.stdout)
 				return
 			self.session.attach_telemetry_sink(self._telemetry_logger)
-			print(f"logging telemetry to {parts[1]}", file=self.stdout)
-		elif parts[0] == "stop":
+			print(f"logging telemetry to {path}", file=self.stdout)
+		elif subcmd == "stop":
 			self.session.detach_telemetry_sink()
 			if self._telemetry_logger is not None:
 				self._telemetry_logger.close()

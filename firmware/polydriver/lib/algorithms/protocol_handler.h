@@ -7,7 +7,6 @@ constexpr uint8_t MY_ID = 0x01;
 constexpr uint8_t STX   = 0x02;
 constexpr uint8_t ETX   = 0x03;
 
-
 // Request commands
 constexpr uint8_t CMD_SET_SPEED     = 0x10;
 constexpr uint8_t CMD_SET_PID       = 0x20;

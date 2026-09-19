@@ -4,12 +4,14 @@
 #include "pwm_generator.h"
 #include "protocol_handler.h"
 #include "ema_filter.h"
+#include "stall_guard.h"
 
 InputCapture encoder;
 PIDRegulator pid;
 PWMGenerator pwm;
 ProtocolHandler protocol;
 EMAFilter ema;
+StallGuard stallGuard;
 
 float targetSpeed = 0.0f;
 bool regulateSignal = false;
@@ -44,7 +46,8 @@ void loop() {
         case CommandEvent::SPEED_UPDATED:
           targetSpeed = protocol.getSpeed();
           regulateSignal = (targetSpeed > 0.0f);
-          
+          stallGuard.reset();
+
           if (!regulateSignal) {
             pid.reset();
             ema.reset();
@@ -85,9 +88,19 @@ void loop() {
     float filteredFrequency = ema.filter(rawFrequency);
 
     if (regulateSignal) {
-      float dt = static_cast<float>(elapsedMicros) / 1000000.0f;
-      float pidOutput = pid.calculate(targetSpeed, filteredFrequency, dt);
-      pwm.setDutyCycle(static_cast<int16_t>(pidOutput));
+      bool justFaulted = stallGuard.update(encoder.getIsStalled(), currentMicros);
+      if (justFaulted) {
+        pid.reset();
+        ema.reset();
+      }
+
+      if (stallGuard.isFaulted()) {
+        pwm.setDutyCycle(0);
+      } else {
+        float dt = static_cast<float>(elapsedMicros) / 1000000.0f;
+        float pidOutput = pid.calculate(targetSpeed, filteredFrequency, dt);
+        pwm.setDutyCycle(static_cast<int16_t>(pidOutput));
+      }
     }
   }
 

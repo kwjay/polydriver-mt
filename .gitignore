@@ -27,3 +27,7 @@ Thumbs.db
 
 # Docs
 docs/
+
+# Python test output
+software/tests/test_logs/*
+!software/tests/test_logs/.gitkeep

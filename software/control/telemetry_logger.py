@@ -1,19 +1,3 @@
-"""CSV telemetry logging.
-
-Two kinds of event get one shared timestamped log, distinguished by a
-"kind" column: a "status" row (frequency/pwm/stalled + the setpoint this
-session commanded) each time a dispenser is polled, and a "settings" row
-(the PID gains + target speed the firmware itself reports) each time
-those are read back. Sharing one file and one row shape means a plot of
-one dispenser's behaviour can be lined up against exactly when its PID
-tunings changed, and multiple dispensers (distinguished by target_id)
-share the same file so their timeseries can be compared for the
-synchronization/accuracy analysis this project exists to support.
-
-Columns that don't apply to a given row's kind are left blank rather than
-omitted, so every row has the same shape and any spreadsheet/CSV tool can
-just filter on "kind".
-"""
 import csv
 import os
 import threading
@@ -60,9 +44,6 @@ class TelemetryLogger:
 		target_speed: Optional[float] = None,
 		timestamp: Optional[float] = None,
 	) -> None:
-		"""One live telemetry reading: measured frequency/pwm/stall state,
-		plus the speed this session last commanded (if any) so tracking
-		error can be computed straight from the log."""
 		self._write_row(
 			target_id=target_id,
 			kind="status",
@@ -79,10 +60,6 @@ class TelemetryLogger:
 		report: SettingsReport,
 		timestamp: Optional[float] = None,
 	) -> None:
-		"""A snapshot of the PID gains and target speed the firmware itself
-		reports (via REQ_SETTINGS) - independent of what this session most
-		recently commanded, since the two can disagree (e.g. a fresh boot,
-		or another controller having talked to the same target)."""
 		self._write_row(
 			target_id=target_id,
 			kind="settings",

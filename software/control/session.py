@@ -1,18 +1,3 @@
-"""PolydriverSession: the layer a UI (terminal or GUI) actually talks to.
-
-It owns the SerialWorker + JobManager pair for one serial port, tracks the
-live state of every dispenser (target_id) that has been added to it, and
-runs a background poller that keeps that state fresh by requesting status
-from each tracked dispenser in turn. On top of that it exposes plain,
-blocking calls (set_speed, set_pid, request_status, ...) so callers don't
-need to know jobs or callbacks exist - submit a job, wait for the
-JobManager to resolve it, return the result or raise.
-
-Multiple dispensers are tracked side by side on purpose: the whole point
-of this project is comparing several polymer dispensers running off the
-same bus, so the session is built around a set of targets from the start
-rather than a single one.
-"""
 import logging
 import threading
 import time
@@ -20,6 +5,7 @@ from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Protocol
 
 from comms.serial_worker import SerialWorker
+from control.calibration import CalibrationError, CalibrationPoint, CalibrationStore
 from jobs.job_manager import JobManager, SerialLike
 from jobs.jobs import (
 	RequestSettingsJob,
@@ -43,11 +29,6 @@ class SessionError(Exception):
 
 
 class TelemetrySink(Protocol):
-	"""What the session needs from a telemetry logger - just enough to
-	record a status reading and a settings snapshot. TelemetryLogger
-	satisfies this structurally; so does any test double with the same
-	two methods."""
-
 	def record_status(
 		self, target_id: int, report: StatusReport, target_speed: Optional[float] = None
 	) -> None: ...
@@ -62,19 +43,16 @@ class DispenserState:
 	last_status_at: Optional[float] = None
 	last_settings: Optional[SettingsReport] = None
 	last_error: Optional[str] = None
-	# The last speed this session actually commanded via set_speed(), so a
-	# telemetry row can be paired with the setpoint it was measured against
-	# (the firmware's own RESP_SETTINGS echo is a separate, on-demand read
-	# and isn't kept in sync with this automatically).
 	last_commanded_speed: Optional[float] = None
 
 
-class SessionLike(Protocol):
-	"""What a UI (the CLI, or later a GUI) actually needs from a session.
-	PolydriverSession satisfies this structurally, and so does a fake used
-	in tests - callers depend on this shape, not on PolydriverSession
-	itself."""
+@dataclass
+class _ActiveRun:
+	stop_event: threading.Event
+	thread: threading.Thread
 
+
+class SessionLike(Protocol):
 	def connect(self, port: str, baudrate: int = 115200) -> None: ...
 	def disconnect(self) -> None: ...
 	def add_target(self, target_id: int, name: Optional[str] = None) -> DispenserState: ...
@@ -85,6 +63,18 @@ class SessionLike(Protocol):
 	def request_settings(self, target_id: int) -> SettingsReport: ...
 	def attach_telemetry_sink(self, sink: TelemetrySink) -> None: ...
 	def detach_telemetry_sink(self) -> None: ...
+	def set_rate(self, target_id: int, rate_g_s: float) -> float: ...
+	def run_for(
+		self, target_id: int, duration_s: float, speed: Optional[float] = None, rate_g_s: Optional[float] = None
+	) -> float: ...
+	def stop_run(self, target_id: int) -> bool: ...
+	def record_calibration_point(
+		self, target_id: int, speed: float, grams: float, duration_s: float
+	) -> CalibrationPoint: ...
+	def calibration_points(self, target_id: int) -> List[CalibrationPoint]: ...
+	def calibration_deadband(self, target_id: int) -> Optional[float]: ...
+	def save_calibration(self, path: str) -> None: ...
+	def load_calibration(self, path: str) -> None: ...
 
 
 class PolydriverSession:
@@ -93,6 +83,7 @@ class PolydriverSession:
 		poll_interval: float = DEFAULT_POLL_INTERVAL,
 		job_timeout: float = DEFAULT_JOB_TIMEOUT,
 		job_retries: int = DEFAULT_JOB_RETRIES,
+		calibration: Optional[CalibrationStore] = None,
 	):
 		self.poll_interval = poll_interval
 		self.job_timeout = job_timeout
@@ -109,6 +100,11 @@ class PolydriverSession:
 		self._poll_stop_event: Optional[threading.Event] = None
 		self._poll_thread: Optional[threading.Thread] = None
 
+		self.calibration: CalibrationStore = calibration if calibration is not None else CalibrationStore()
+
+		self._active_runs: Dict[int, _ActiveRun] = {}
+		self._active_runs_lock = threading.Lock()
+
 	# --- connection lifecycle -------------------------------------------------
 
 	@property
@@ -116,7 +112,6 @@ class PolydriverSession:
 		return self.job_manager is not None
 
 	def connect(self, port: str, baudrate: int = 115200) -> None:
-		"""Open the real serial port and start talking to the bus."""
 		if self.is_connected:
 			raise SessionError("already connected")
 		serial_worker = SerialWorker(port, baudrate)
@@ -126,9 +121,6 @@ class PolydriverSession:
 		self._attach(serial_worker, job_manager)
 
 	def _attach(self, serial_worker: SerialLike, job_manager: JobManager) -> None:
-		"""Hook up an already-started SerialWorker/JobManager pair and start
-		the poller. Split out from connect() so tests can attach a fake
-		transport without opening a real serial port."""
 		self.serial_worker = serial_worker  # type: ignore[assignment]
 		self.job_manager = job_manager
 		self._poll_stop_event = threading.Event()
@@ -136,11 +128,10 @@ class PolydriverSession:
 		self._poll_thread.start()
 
 	def disconnect(self) -> None:
+		self._cancel_active_runs()
 		if self._poll_stop_event is not None:
 			self._poll_stop_event.set()
 		if self._poll_thread is not None:
-			# The stop event wakes the poller immediately even mid-sleep, so
-			# this join doesn't block for up to a whole poll_interval.
 			self._poll_thread.join(timeout=self.job_timeout * (self.job_retries + 1) + 1.0)
 			self._poll_thread = None
 		self._poll_stop_event = None
@@ -219,11 +210,95 @@ class PolydriverSession:
 			self._telemetry_sink.record_settings(target_id, report)
 		return report
 
+	# --- calibration ---------------------------------------------------------
+
+	def record_calibration_point(
+		self, target_id: int, speed: float, grams: float, duration_s: float
+	) -> CalibrationPoint:
+		return self.calibration.add_measurement(target_id, speed, grams, duration_s)
+
+	def calibration_points(self, target_id: int) -> List[CalibrationPoint]:
+		try:
+			return self.calibration.points(target_id)
+		except CalibrationError:
+			return []
+
+	def calibration_deadband(self, target_id: int) -> Optional[float]:
+		try:
+			return self.calibration.deadband_speed(target_id)
+		except CalibrationError:
+			return None
+
+	def save_calibration(self, path: str) -> None:
+		self.calibration.save(path)
+
+	def load_calibration(self, path: str) -> None:
+		self.calibration = CalibrationStore.load(path)
+
+	def set_rate(self, target_id: int, rate_g_s: float) -> float:
+		speed = self.calibration.speed_for_rate(target_id, rate_g_s)
+		self.set_speed(target_id, speed)
+		return speed
+
+	# --- timed runs ------------------------------------------------------
+
+	def run_for(
+		self,
+		target_id: int,
+		duration_s: float,
+		speed: Optional[float] = None,
+		rate_g_s: Optional[float] = None,
+	) -> float:
+		if (speed is None) == (rate_g_s is None):
+			raise ValueError("pass exactly one of speed or rate_g_s")
+		if duration_s <= 0:
+			raise ValueError("duration_s must be positive")
+		self._cancel_run(target_id, wait=True)
+
+		resolved_speed = speed if speed is not None else self.calibration.speed_for_rate(target_id, rate_g_s)
+		self.set_speed(target_id, resolved_speed)
+
+		stop_event = threading.Event()
+
+		def _worker() -> None:
+			try:
+				stop_event.wait(duration_s)
+			finally:
+				with self._active_runs_lock:
+					self._active_runs.pop(target_id, None)
+				try:
+					self.set_speed(target_id, 0.0)
+				except SessionError as exc:
+					logger.warning("run_for could not auto-stop target %s: %s", target_id, exc)
+
+		thread = threading.Thread(target=_worker, daemon=True)
+		with self._active_runs_lock:
+			self._active_runs[target_id] = _ActiveRun(stop_event=stop_event, thread=thread)
+		thread.start()
+		return resolved_speed
+
+	def stop_run(self, target_id: int) -> bool:
+		return self._cancel_run(target_id, wait=True)
+
+	def _cancel_run(self, target_id: int, wait: bool) -> bool:
+		with self._active_runs_lock:
+			run = self._active_runs.get(target_id)
+		if run is None:
+			return False
+		run.stop_event.set()
+		if wait:
+			run.thread.join(timeout=self._budget())
+		return True
+
+	def _cancel_active_runs(self) -> None:
+		with self._active_runs_lock:
+			target_ids = list(self._active_runs.keys())
+		for target_id in target_ids:
+			self._cancel_run(target_id, wait=True)
+
 	# --- internals -------------------------------------------------------
 
 	def _budget(self) -> float:
-		"""Enough wall-clock time for every retry the job might take, plus
-		a little slack for scheduling jitter."""
 		return self.job_timeout * (self.job_retries + 1) + 0.5
 
 	def _run_blocking(self, job: Any) -> Any:
@@ -271,6 +346,4 @@ class PolydriverSession:
 					with self._targets_lock:
 						state.last_error = str(exc)
 					logger.warning("status poll failed for target %s: %s", state.target_id, exc)
-			# wait() returns as soon as disconnect() sets the event, instead
-			# of blocking for the full poll_interval like a plain sleep would.
 			stop_event.wait(self.poll_interval)

@@ -1,0 +1,3 @@
+This folder holds files written by the test suite (telemetry CSV logs,
+temp files for the cli/telemetry_logger tests). Contents are gitignored;
+this file just keeps the folder present in git.
