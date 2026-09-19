@@ -56,6 +56,11 @@ enum class RxState{
 };
 
 typedef void (*TxCallback)(const uint8_t* data, uint8_t len);
+typedef uint32_t (*TimeSource)();
+
+// Max gap between two bytes of one frame. A byte at 115200 8N1 takes ~87us,
+// so this is ~115 byte times.
+constexpr uint16_t DEFAULT_FRAME_TIMEOUT_MS = 10;
 
 class ProtocolHandler {
 private:
@@ -71,6 +76,10 @@ private:
   PidSettings parsedPid;
 
   TxCallback txFunc{nullptr};
+  TimeSource timeFunc{nullptr};
+  uint32_t lastByteMs{0};
+  uint16_t frameTimeoutMs{DEFAULT_FRAME_TIMEOUT_MS};
+  uint16_t frameTimeouts{0};
 
   uint8_t calculateCRC8(const uint8_t* data, uint8_t len);
   void sendResponse(uint8_t cmd, const uint8_t* payload, uint8_t len);
@@ -80,6 +89,11 @@ private:
 public:
   ProtocolHandler() = default;
   void setTxCallback(TxCallback callback) { txFunc = callback; }
+
+  // Without a time source the inter-byte timeout is disabled entirely.
+  void setTimeSource(TimeSource callback) { timeFunc = callback; }
+  void setFrameTimeout(uint16_t ms) { frameTimeoutMs = ms; }
+  uint16_t getFrameTimeouts() const { return frameTimeouts; }
 
   CommandEvent processByte(uint8_t b);
   void sendTelemetry(float frequency, uint8_t pwm, uint8_t isStalled);

@@ -31,6 +31,7 @@ void serialTransmit(const uint8_t* data, uint8_t len) {
 void setup() {
   Serial.begin(115200); 
   protocol.setTxCallback(serialTransmit);
+  protocol.setTimeSource(millis);
   encoder.init();
   pwm.init();
 }

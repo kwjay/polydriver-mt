@@ -118,6 +118,16 @@ CommandEvent ProtocolHandler::processFrame() {
 }
 
 CommandEvent ProtocolHandler::processByte(uint8_t b) {
+  if (timeFunc != nullptr) {
+    uint32_t now = timeFunc();
+    // Unsigned subtraction, so a millis() rollover is not a false timeout.
+    if (currentState != RxState::WAIT_STX && (now - lastByteMs) > frameTimeoutMs) {
+      currentState = RxState::WAIT_STX;
+      frameTimeouts++;
+    }
+    lastByteMs = now;
+  }
+
   CommandEvent eventOccurred = CommandEvent::NONE;
     switch (currentState) {
       case RxState::WAIT_STX:

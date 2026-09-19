@@ -5,6 +5,9 @@
 uint8_t txBuffer[64];
 uint8_t txLength = 0;
 
+uint32_t fakeNow = 0;
+uint32_t fakeMillis() { return fakeNow; }
+
 void dummyTxCallback(const uint8_t* data, uint8_t len) {
 	for(uint8_t i = 0; i < len; i++) {
 		txBuffer[i] = data[i];
@@ -13,6 +16,7 @@ void dummyTxCallback(const uint8_t* data, uint8_t len) {
 }
 
 void setUp(void) {
+	fakeNow = 0;
 	txLength = 0;
 	memset(txBuffer, 0, sizeof(txBuffer));
 }
@@ -261,6 +265,150 @@ void test_protocol_max_length_payload_is_accepted_by_the_framer() {
 	TEST_ASSERT_EQUAL_HEX8(static_cast<uint8_t>(NackReason::UNKNOWN_COMMAND), nackReason());
 }
 
+void pushTruncatedSetSpeed(ProtocolHandler& handler) {
+	handler.processByte(STX);
+	handler.processByte(MY_ID);
+	handler.processByte(CMD_SET_SPEED);
+	handler.processByte(4);
+	handler.processByte(0x00);
+	handler.processByte(0x00);
+}
+
+CommandEvent pushValidFrameWithGap(ProtocolHandler& handler, uint8_t cmd, const uint8_t* payload, uint8_t len, uint32_t gapMs) {
+	uint8_t crcBuf[3 + MAX_PAYLOAD_LEN];
+	crcBuf[0] = MY_ID;
+	crcBuf[1] = cmd;
+	crcBuf[2] = len;
+	if (len > 0) memcpy(&crcBuf[3], payload, len);
+	uint8_t crc = calculateTestCRC8(crcBuf, 3 + len);
+
+	uint8_t frame[FRAME_OVERHEAD + MAX_PAYLOAD_LEN];
+	uint8_t n = 0;
+	frame[n++] = STX;
+	frame[n++] = MY_ID;
+	frame[n++] = cmd;
+	frame[n++] = len;
+	for (uint8_t i = 0; i < len; i++) frame[n++] = payload[i];
+	frame[n++] = crc;
+	frame[n++] = ETX;
+
+	CommandEvent evt = CommandEvent::NONE;
+	for (uint8_t i = 0; i < n; i++) {
+		if (i > 0) fakeNow += gapMs;
+		evt = handler.processByte(frame[i]);
+	}
+	return evt;
+}
+
+
+void test_protocol_times_out_a_truncated_frame_and_accepts_the_next() {
+	ProtocolHandler handler;
+	handler.setTxCallback(dummyTxCallback);
+	handler.setTimeSource(fakeMillis);
+
+	pushTruncatedSetSpeed(handler);
+
+	fakeNow += DEFAULT_FRAME_TIMEOUT_MS + 1;
+	union { float f; uint8_t b[4]; } speedData;
+	speedData.f = 15.5f;
+	CommandEvent evt = pushValidFrame(handler, CMD_SET_SPEED, speedData.b, 4);
+
+	TEST_ASSERT_EQUAL(static_cast<int>(CommandEvent::SPEED_UPDATED), static_cast<int>(evt));
+	TEST_ASSERT_EQUAL_FLOAT(15.5f, handler.getSpeed());
+	TEST_ASSERT_EQUAL_UINT16(1, handler.getFrameTimeouts());
+}
+
+void test_protocol_without_a_time_source_a_truncated_frame_eats_the_next() {
+	ProtocolHandler handler;
+	handler.setTxCallback(dummyTxCallback);
+
+	pushTruncatedSetSpeed(handler);
+
+	union { float f; uint8_t b[4]; } speedData;
+	speedData.f = 15.5f;
+	CommandEvent evt = pushValidFrame(handler, CMD_SET_SPEED, speedData.b, 4);
+
+	TEST_ASSERT_NOT_EQUAL(static_cast<int>(CommandEvent::SPEED_UPDATED), static_cast<int>(evt));
+	TEST_ASSERT_EQUAL_FLOAT(0.0f, handler.getSpeed());
+	TEST_ASSERT_EQUAL_UINT16(0, handler.getFrameTimeouts());
+}
+
+void test_protocol_gaps_below_the_timeout_do_not_abandon_the_frame() {
+	ProtocolHandler handler;
+	handler.setTxCallback(dummyTxCallback);
+	handler.setTimeSource(fakeMillis);
+
+	union { float f; uint8_t b[4]; } speedData;
+	speedData.f = 7.25f;
+	CommandEvent evt = pushValidFrameWithGap(handler, CMD_SET_SPEED, speedData.b, 4, DEFAULT_FRAME_TIMEOUT_MS - 1);
+
+	TEST_ASSERT_EQUAL(static_cast<int>(CommandEvent::SPEED_UPDATED), static_cast<int>(evt));
+	TEST_ASSERT_EQUAL_FLOAT(7.25f, handler.getSpeed());
+	TEST_ASSERT_EQUAL_UINT16(0, handler.getFrameTimeouts());
+}
+
+void test_protocol_idle_time_between_frames_is_not_a_timeout() {
+	ProtocolHandler handler;
+	handler.setTxCallback(dummyTxCallback);
+	handler.setTimeSource(fakeMillis);
+
+	pushValidFrame(handler, CMD_REQ_STAT, nullptr, 0);
+	fakeNow += 10000;
+	CommandEvent evt = pushValidFrame(handler, CMD_REQ_STAT, nullptr, 0);
+
+	TEST_ASSERT_EQUAL(static_cast<int>(CommandEvent::TELEMETRY_REQUESTED), static_cast<int>(evt));
+	TEST_ASSERT_EQUAL_UINT16(0, handler.getFrameTimeouts());
+}
+
+void test_protocol_counts_one_timeout_per_abandoned_frame() {
+	ProtocolHandler handler;
+	handler.setTxCallback(dummyTxCallback);
+	handler.setTimeSource(fakeMillis);
+
+	pushTruncatedSetSpeed(handler);
+	fakeNow += DEFAULT_FRAME_TIMEOUT_MS + 1;
+	pushTruncatedSetSpeed(handler);
+	fakeNow += DEFAULT_FRAME_TIMEOUT_MS + 1;
+	CommandEvent evt = pushValidFrame(handler, CMD_REQ_STAT, nullptr, 0);
+
+	TEST_ASSERT_EQUAL(static_cast<int>(CommandEvent::TELEMETRY_REQUESTED), static_cast<int>(evt));
+	TEST_ASSERT_EQUAL_UINT16(2, handler.getFrameTimeouts());
+}
+
+void test_protocol_timeout_survives_a_millis_rollover() {
+	ProtocolHandler handler;
+	handler.setTxCallback(dummyTxCallback);
+	handler.setTimeSource(fakeMillis);
+
+	fakeNow = 0xFFFFFFF0;
+	pushTruncatedSetSpeed(handler);
+
+	fakeNow = 0x00000005;
+	CommandEvent evt = pushValidFrame(handler, CMD_REQ_STAT, nullptr, 0);
+
+	TEST_ASSERT_EQUAL(static_cast<int>(CommandEvent::TELEMETRY_REQUESTED), static_cast<int>(evt));
+	TEST_ASSERT_EQUAL_UINT16(1, handler.getFrameTimeouts());
+}
+
+void test_protocol_frame_timeout_is_configurable() {
+	ProtocolHandler handler;
+	handler.setTxCallback(dummyTxCallback);
+	handler.setTimeSource(fakeMillis);
+	handler.setFrameTimeout(50);
+
+	pushTruncatedSetSpeed(handler);
+	fakeNow += 20;
+	CommandEvent evt = pushValidFrame(handler, CMD_REQ_STAT, nullptr, 0);
+	TEST_ASSERT_NOT_EQUAL(static_cast<int>(CommandEvent::TELEMETRY_REQUESTED), static_cast<int>(evt));
+	TEST_ASSERT_EQUAL_UINT16(0, handler.getFrameTimeouts());
+
+	pushTruncatedSetSpeed(handler);
+	fakeNow += 60;
+	evt = pushValidFrame(handler, CMD_REQ_STAT, nullptr, 0);
+	TEST_ASSERT_EQUAL(static_cast<int>(CommandEvent::TELEMETRY_REQUESTED), static_cast<int>(evt));
+	TEST_ASSERT_EQUAL_UINT16(1, handler.getFrameTimeouts());
+}
+
 int main(void) {
 	UNITY_BEGIN();
 	RUN_TEST(test_protocol_set_speed);
@@ -277,5 +425,12 @@ int main(void) {
 	RUN_TEST(test_protocol_req_settings_without_payload_still_works);
 	RUN_TEST(test_protocol_a_rejected_frame_does_not_disturb_the_next_one);
 	RUN_TEST(test_protocol_max_length_payload_is_accepted_by_the_framer);
+	RUN_TEST(test_protocol_times_out_a_truncated_frame_and_accepts_the_next);
+	RUN_TEST(test_protocol_without_a_time_source_a_truncated_frame_eats_the_next);
+	RUN_TEST(test_protocol_gaps_below_the_timeout_do_not_abandon_the_frame);
+	RUN_TEST(test_protocol_idle_time_between_frames_is_not_a_timeout);
+	RUN_TEST(test_protocol_counts_one_timeout_per_abandoned_frame);
+	RUN_TEST(test_protocol_timeout_survives_a_millis_rollover);
+	RUN_TEST(test_protocol_frame_timeout_is_configurable);
 	return UNITY_END();
 }
