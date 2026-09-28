@@ -1,20 +1,18 @@
 #include <Arduino.h>
 #include "input_capture.h"
-#include "pid_regulator.h"
 #include "pwm_generator.h"
 #include "protocol_handler.h"
-#include "ema_filter.h"
-#include "stall_guard.h"
+#include "dispenser_controller.h"
+#include "periodic_timer.h"
+
+static constexpr uint32_t CONTROL_PERIOD_US = 10000;
+static constexpr float CONTROL_DT_S = 0.01f;
 
 InputCapture encoder;
-PIDRegulator pid;
 PWMGenerator pwm;
 ProtocolHandler protocol;
-EMAFilter ema;
-StallGuard stallGuard;
-
-float targetSpeed = 0.0f;
-bool regulateSignal = false;
+DispenserController controller;
+PeriodicTimer controlTimer(CONTROL_PERIOD_US);
 
 ISR(TIMER1_CAPT_vect) {
   encoder.handleInputCapture();
@@ -29,80 +27,49 @@ void serialTransmit(const uint8_t* data, uint8_t len) {
 }
 
 void setup() {
-  Serial.begin(115200); 
+  Serial.begin(115200);
   protocol.setTxCallback(serialTransmit);
   protocol.setTimeSource(millis);
   encoder.init();
   pwm.init();
 }
 
-unsigned long previousMicros = 0;
-const unsigned long sampleTime = 10000;
 void loop() {
   while (Serial.available() > 0) {
-    uint8_t incomingByte = Serial.read();
-    CommandEvent event = protocol.processByte(incomingByte);
-    if (event != CommandEvent::NONE) {
-      switch (event) {
-        case CommandEvent::SPEED_UPDATED:
-          targetSpeed = protocol.getSpeed();
-          regulateSignal = (targetSpeed > 0.0f);
-          stallGuard.reset();
+    CommandEvent event = protocol.processByte(Serial.read());
 
-          if (!regulateSignal) {
-            pid.reset();
-            ema.reset();
-            pwm.setDutyCycle(0);
-          }
-          break;
-          
-        case CommandEvent::PID_UPDATED: {
-          const PidSettings& newPid = protocol.getPidSettings();
-          pid.setTunings(newPid.kp, newPid.ki, newPid.kd);
-          break;
-        }
-          
-        case CommandEvent::TELEMETRY_REQUESTED: {
-          float rawFreq = encoder.getSignalFrequency();
-          uint8_t currentPwm = pwm.getDutyCycle();
-          uint8_t stalledStatus = encoder.getIsStalled() ? 1 : 0;
-          protocol.sendTelemetry(rawFreq, currentPwm, stalledStatus);
-          break;
-        }
-          
-        case CommandEvent::SYNC_REQUESTED:
-          protocol.sendSettings(pid.getKp(), pid.getKi(), pid.getKd(), targetSpeed);
-          break;
-        
-        default:
-          break;
+    switch (event) {
+      case CommandEvent::SPEED_UPDATED:
+        controller.setTargetSpeed(protocol.getSpeed());
+        if (!controller.isRegulating()) pwm.setDutyCycle(0);
+        break;
+
+      case CommandEvent::PID_UPDATED: {
+        const PidSettings& newPid = protocol.getPidSettings();
+        controller.setTunings(newPid.kp, newPid.ki, newPid.kd);
+        break;
       }
+
+      case CommandEvent::TELEMETRY_REQUESTED:
+        protocol.sendTelemetry(encoder.getSignalFrequency(),
+                               pwm.getDutyCycle(),
+                               encoder.getIsStalled() ? 1 : 0);
+        break;
+
+      case CommandEvent::SYNC_REQUESTED:
+        protocol.sendSettings(controller.getKp(), controller.getKi(),
+                              controller.getKd(), controller.getTargetSpeed());
+        break;
+
+      default:
+        break;
     }
   }
 
-  unsigned long currentMicros = micros();
-  unsigned long elapsedMicros = currentMicros - previousMicros;
-  if (elapsedMicros >= sampleTime) {
-    previousMicros = currentMicros;
-
-    float rawFrequency = encoder.getSignalFrequency();
-    float filteredFrequency = ema.filter(rawFrequency);
-
-    if (regulateSignal) {
-      bool justFaulted = stallGuard.update(encoder.getIsStalled(), currentMicros);
-      if (justFaulted) {
-        pid.reset();
-        ema.reset();
-      }
-
-      if (stallGuard.isFaulted()) {
-        pwm.setDutyCycle(0);
-      } else {
-        float dt = static_cast<float>(elapsedMicros) / 1000000.0f;
-        float pidOutput = pid.calculate(targetSpeed, filteredFrequency, dt);
-        pwm.setDutyCycle(static_cast<int16_t>(pidOutput));
-      }
-    }
+  uint32_t now = micros();
+  if (controlTimer.due(now)) {
+    pwm.setDutyCycle(controller.update(encoder.getSignalFrequency(),
+                                       encoder.getIsStalled(),
+                                       now, CONTROL_DT_S));
   }
-
 }

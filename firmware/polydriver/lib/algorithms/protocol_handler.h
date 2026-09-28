@@ -90,7 +90,6 @@ public:
   ProtocolHandler() = default;
   void setTxCallback(TxCallback callback) { txFunc = callback; }
 
-  // Without a time source the inter-byte timeout is disabled entirely.
   void setTimeSource(TimeSource callback) { timeFunc = callback; }
   void setFrameTimeout(uint16_t ms) { frameTimeoutMs = ms; }
   uint16_t getFrameTimeouts() const { return frameTimeouts; }

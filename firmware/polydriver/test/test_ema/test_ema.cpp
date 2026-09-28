@@ -59,5 +59,5 @@ int main() {
 	RUN_TEST(test_ema_filter_reset);
 	RUN_TEST(test_ema_filter_set_alpha);
 	RUN_TEST(test_ema_filter_invalid_alpha);
-	UNITY_END();
+	return UNITY_END();
 }

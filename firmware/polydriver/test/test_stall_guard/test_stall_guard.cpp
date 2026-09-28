@@ -81,5 +81,5 @@ int main() {
   RUN_TEST(test_stall_guard_intermittent_stalls_do_not_accumulate);
   RUN_TEST(test_stall_guard_stays_latched_until_reset);
   RUN_TEST(test_stall_guard_reset_requires_a_full_new_timeout_to_fault_again);
-  UNITY_END();
+  return UNITY_END();
 }

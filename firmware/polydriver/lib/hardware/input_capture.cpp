@@ -22,7 +22,7 @@ void InputCapture::handleInputCapture() {
     overflowCount = currentOverflow;
   }
 
-  uint32_t currentTimestamp = (currentOverflow << 16) | capture;
+  uint32_t currentTimestamp = capture_math::reconstructTimestamp(currentOverflow, capture);
   if (!isStalled) {
     period = currentTimestamp - previousTimestamp;
   } else {
@@ -37,7 +37,7 @@ void InputCapture::handleTimerOverflow() {
   overflowCount++;
   if (!isStalled) {
     overflowsSinceLastCapture++;
-    if (overflowsSinceLastCapture >= TIMEOUT_OVERFLOWS) {
+    if (overflowsSinceLastCapture >= capture_math::TIMEOUT_OVERFLOWS) {
       isStalled = true;
       period = 0;
     }
@@ -52,8 +52,8 @@ float InputCapture::getSignalFrequency() const {
   safePeriod = period;
   safeStalled = isStalled;
   interrupts();
-  if (safePeriod == 0 || safeStalled) return 0.0f;
-  return CLOCK_SPEED / (static_cast<float>(PRESCALER) * static_cast<float>(safePeriod));
+  if (safeStalled) return 0.0f;
+  return capture_math::frequencyFromPeriod(safePeriod);
 }
 
 bool InputCapture::getIsStalled() const {

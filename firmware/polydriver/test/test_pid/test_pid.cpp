@@ -83,5 +83,5 @@ int main() {
 	RUN_TEST(test_pid_lower_bound_clamping);
 	RUN_TEST(test_pid_set_tunings);
 	RUN_TEST(test_pid_reset);
-	UNITY_END();
+	return UNITY_END();
 }
