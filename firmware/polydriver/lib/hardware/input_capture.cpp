@@ -15,32 +15,28 @@ void InputCapture::init() {
 void InputCapture::handleInputCapture() {
   uint16_t capture = ICR1;
   uint32_t currentOverflow = overflowCount;
+  edgeCount++;
 
   if ((TIFR1 & _BV(TOV1)) && (capture < 0x7FFF)) {
     currentOverflow++;
     TIFR1 = _BV(TOV1);
     overflowCount = currentOverflow;
   }
-
+  
   uint32_t currentTimestamp = capture_math::reconstructTimestamp(currentOverflow, capture);
   if (!isStalled) {
     period = currentTimestamp - previousTimestamp;
   } else {
     isStalled = false;
   }
-
   previousTimestamp = currentTimestamp;
-  overflowsSinceLastCapture = 0;
 }
 
 void InputCapture::handleTimerOverflow() {
   overflowCount++;
-  if (!isStalled) {
-    overflowsSinceLastCapture++;
-    if (overflowsSinceLastCapture >= capture_math::TIMEOUT_OVERFLOWS) {
-      isStalled = true;
-      period = 0;
-    }
+  if (!isStalled && capture_math::edgeTimedOut(overflowCount, previousTimestamp)) {
+    isStalled = true;
+    period = 0;
   }
 }
 
@@ -54,6 +50,14 @@ float InputCapture::getSignalFrequency() const {
   interrupts();
   if (safeStalled) return 0.0f;
   return capture_math::frequencyFromPeriod(safePeriod);
+}
+
+uint32_t InputCapture::getEdgeCount() const {
+  uint32_t safeCount;
+  noInterrupts();
+  safeCount = edgeCount;
+  interrupts();
+  return safeCount;
 }
 
 bool InputCapture::getIsStalled() const {

@@ -80,8 +80,9 @@ class PolydriverShell(cmd.Cmd):
 			else:
 				print(
 					f"{state.target_id} ({state.name}): "
-					f"target_speed={target_speed} frequency={status.frequency:.2f} pwm={status.pwm} "
-					f"stalled={status.is_stalled}",
+					f"target_speed={target_speed} frequency={status.frequency:.2f} "
+					f"filtered={status.filtered_frequency:.2f} pwm={status.pwm} "
+					f"stalled={status.is_stalled} fault={status.stall_fault}",
 					file=self.stdout,
 				)
 			if state.last_error:
@@ -125,7 +126,12 @@ class PolydriverShell(cmd.Cmd):
 			target_id = self._resolve_target_id(parts[0])
 			report = self.session.request_status(target_id)
 			print(
-				f"frequency={report.frequency:.2f} pwm={report.pwm} stalled={report.is_stalled}",
+				f"frequency={report.frequency:.2f} filtered={report.filtered_frequency:.2f} "
+				f"pwm={report.pwm} stalled={report.is_stalled} fault={report.stall_fault} "
+				f"regulating={report.regulating} comms_lost={report.comms_lost}\n"
+				f"  device_us={report.device_us} edges={report.edge_count} "
+				f"loop_resyncs={report.missed_cycles} max_loop_us={report.max_loop_interval_us} "
+				f"frame_timeouts={report.frame_timeouts} crc_errors={report.crc_errors}",
 				file=self.stdout,
 			)
 		except (SessionError, ValueError) as exc:

@@ -1,4 +1,5 @@
 #include <Arduino.h>
+#include <avr/wdt.h>
 #include "input_capture.h"
 #include "pwm_generator.h"
 #include "protocol_handler.h"
@@ -27,16 +28,22 @@ void serialTransmit(const uint8_t* data, uint8_t len) {
 }
 
 void setup() {
+  wdt_disable();
   Serial.begin(115200);
   protocol.setTxCallback(serialTransmit);
   protocol.setTimeSource(millis);
   encoder.init();
   pwm.init();
+  // Watchdog: MCU reset after 500 ms without wdt_reset()
+  wdt_enable(WDTO_500MS);
 }
 
 void loop() {
+  wdt_reset();
+
   while (Serial.available() > 0) {
     CommandEvent event = protocol.processByte(Serial.read());
+    if (event != CommandEvent::NONE) controller.onHostActivity(micros());
 
     switch (event) {
       case CommandEvent::SPEED_UPDATED:
@@ -50,11 +57,22 @@ void loop() {
         break;
       }
 
-      case CommandEvent::TELEMETRY_REQUESTED:
-        protocol.sendTelemetry(encoder.getSignalFrequency(),
-                               pwm.getDutyCycle(),
-                               encoder.getIsStalled() ? 1 : 0);
+      case CommandEvent::TELEMETRY_REQUESTED: {
+        TelemetrySnapshot t;
+        t.rawFrequency = encoder.getSignalFrequency();
+        t.filteredFrequency = controller.getFilteredFrequency();
+        t.pwm = pwm.getDutyCycle();
+        t.flags = (encoder.getIsStalled() ? StatusFlag::ENCODER_STALLED : 0) |
+                  (controller.isFaulted() ? StatusFlag::STALL_FAULT : 0) |
+                  (controller.isRegulating() ? StatusFlag::REGULATING : 0) |
+                  (controller.isCommsLost() ? StatusFlag::COMMS_LOST : 0);
+        t.deviceMicros = micros();
+        t.edgeCount = encoder.getEdgeCount();
+        t.missedCycles = controlTimer.getMissedCycles();
+        t.maxLoopIntervalUs = controlTimer.takeMaxIntervalUs();
+        protocol.sendTelemetry(t);
         break;
+      }
 
       case CommandEvent::SYNC_REQUESTED:
         protocol.sendSettings(controller.getKp(), controller.getKi(),

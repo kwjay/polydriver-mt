@@ -1,4 +1,4 @@
-from enum import Enum, IntEnum, auto
+from enum import Enum, IntEnum, IntFlag, auto
 
 STX = 0x02
 ETX = 0x03
@@ -13,7 +13,25 @@ RESP_NACK = 0x12
 RESP_STATUS = 0x31
 RESP_SETTINGS = 0x33
 
+# Inbound to the board (requests). Must match MAX_PAYLOAD_LEN in protocol_handler.h.
 MAX_PAYLOAD_LEN = 16
+# Outbound from the board (responses); RESP_STATUS is the largest.
+# Must match MAX_RESPONSE_PAYLOAD_LEN in protocol_handler.h.
+MAX_RESPONSE_PAYLOAD_LEN = 26
+
+# RESP_STATUS payload, little-endian. Mirrors the layout comment in protocol_handler.h:
+# raw Hz, filtered Hz, pwm, flags, device micros, edge count, loop resyncs,
+# longest loop interval [us], abandoned frames, bad-CRC frames received.
+STATUS_PAYLOAD_FORMAT = "<ffBBIIHHHH"
+STATUS_PAYLOAD_LEN = 26
+
+
+# Mirrors StatusFlag in protocol_handler.h.
+class StatusFlag(IntFlag):
+	ENCODER_STALLED = 0x01
+	STALL_FAULT = 0x02
+	REGULATING = 0x04
+	COMMS_LOST = 0x08
 
 class RxState(Enum):
 	WAIT_STX = auto()

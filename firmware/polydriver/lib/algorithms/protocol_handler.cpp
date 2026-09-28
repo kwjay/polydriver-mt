@@ -56,6 +56,7 @@ CommandEvent ProtocolHandler::processFrame() {
   memcpy(&crcBuffer[3], rxPayload, rxLength);
 
   if (calculateCRC8(crcBuffer, 3 + rxLength) != rxCrc) {
+    crcErrors++;
     sendNack(NackReason::BAD_CRC);
     return CommandEvent::NONE;
   }
@@ -168,14 +169,34 @@ CommandEvent ProtocolHandler::processByte(uint8_t b) {
   return eventOccurred;
 }
 
-void ProtocolHandler::sendTelemetry(float frequency, uint8_t pwm, uint8_t isStalled) {
-  uint8_t payload[6];
-  union { float f; uint8_t b[4]; } freqUnion;
-  freqUnion.f = frequency;
-  memcpy(&payload[0], freqUnion.b, 4);
-  payload[4] = pwm;
-  payload[5] = isStalled;
-  sendResponse(RESP_STATUS, payload, 6);
+static void putFloat(uint8_t* dst, float value) {
+  union { float f; uint8_t b[4]; } conv;
+  conv.f = value;
+  memcpy(dst, conv.b, 4);
+}
+
+static void putU32(uint8_t* dst, uint32_t value) {
+  for (uint8_t i = 0; i < 4; i++) dst[i] = static_cast<uint8_t>(value >> (8 * i));
+}
+
+static void putU16(uint8_t* dst, uint16_t value) {
+  dst[0] = static_cast<uint8_t>(value);
+  dst[1] = static_cast<uint8_t>(value >> 8);
+}
+
+void ProtocolHandler::sendTelemetry(const TelemetrySnapshot& s) {
+  uint8_t payload[STATUS_PAYLOAD_LEN];
+  putFloat(&payload[0], s.rawFrequency);
+  putFloat(&payload[4], s.filteredFrequency);
+  payload[8] = s.pwm;
+  payload[9] = s.flags;
+  putU32(&payload[10], s.deviceMicros);
+  putU32(&payload[14], s.edgeCount);
+  putU16(&payload[18], s.missedCycles);
+  putU16(&payload[20], s.maxLoopIntervalUs > 0xFFFFUL ? 0xFFFF : static_cast<uint16_t>(s.maxLoopIntervalUs));
+  putU16(&payload[22], frameTimeouts);
+  putU16(&payload[24], crcErrors);
+  sendResponse(RESP_STATUS, payload, STATUS_PAYLOAD_LEN);
 }
 
 void ProtocolHandler::sendSettings(float kp, float ki, float kd, float speed) {

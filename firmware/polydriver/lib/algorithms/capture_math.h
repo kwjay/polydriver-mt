@@ -10,6 +10,9 @@ constexpr uint8_t PRESCALER = 64;
 constexpr uint8_t TIMEOUT_OVERFLOWS = 2;
 constexpr uint32_t TCNT_MAX_VALUE = 65536UL;
 
+// 2 x 65536 ticks x 4 us = 524.288 ms without an edge
+constexpr uint32_t STALL_TIMEOUT_TICKS = TCNT_MAX_VALUE * TIMEOUT_OVERFLOWS;
+
 inline uint32_t reconstructTimestamp(uint32_t overflowCount, uint16_t capture) {
   return (overflowCount << 16) | capture;
 }
@@ -19,9 +22,12 @@ inline float frequencyFromPeriod(uint32_t periodTicks) {
   return CLOCK_SPEED / (static_cast<float>(PRESCALER) * static_cast<float>(periodTicks));
 }
 
-// Slowest signal still measurable: TIMEOUT_OVERFLOWS full timer periods.
+inline bool edgeTimedOut(uint32_t overflowCount, uint32_t lastEdgeTimestamp) {
+  return reconstructTimestamp(overflowCount, 0) - lastEdgeTimestamp >= STALL_TIMEOUT_TICKS;
+}
+
 inline float minMeasurableFrequency() {
-  return frequencyFromPeriod(TCNT_MAX_VALUE * TIMEOUT_OVERFLOWS);
+  return frequencyFromPeriod(STALL_TIMEOUT_TICKS);
 }
 
 }

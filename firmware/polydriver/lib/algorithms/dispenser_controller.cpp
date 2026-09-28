@@ -1,15 +1,23 @@
 #include "dispenser_controller.h"
 
 void DispenserController::setTargetSpeed(float hz) {
+  const bool starting = (hz > 0.0f) && !regulating;
   targetSpeed = hz;
   regulating = (hz > 0.0f);
-  stallGuard.reset();
+  commsLost = false;
+
+  if (starting) stallGuard.reset();
 
   if (!regulating) {
     pid.reset();
     ema.reset();
     filteredFrequency = 0.0f;
   }
+}
+
+void DispenserController::onHostActivity(uint32_t nowMicros) {
+  lastHostActivityUs = nowMicros;
+  hostSeen = true;
 }
 
 void DispenserController::setTunings(float kp, float ki, float kd) {
@@ -20,6 +28,12 @@ uint8_t DispenserController::update(float rawFrequency, bool encoderStalled, uin
   filteredFrequency = ema.filter(rawFrequency);
 
   if (!regulating) return 0;
+
+  if (hostSeen && (nowMicros - lastHostActivityUs) >= COMMS_TIMEOUT_US) {
+    setTargetSpeed(0.0f);
+    commsLost = true;
+    return 0;
+  }
 
   if (stallGuard.update(encoderStalled, nowMicros)) {
     pid.reset();

@@ -11,7 +11,7 @@ private:
   volatile uint32_t previousTimestamp{0};
   volatile uint32_t overflowCount{0};
   volatile uint32_t period{0};
-  volatile uint8_t overflowsSinceLastCapture{0};
+  volatile uint32_t edgeCount{0};
   volatile bool isStalled{true};
 
 public:
@@ -22,6 +22,7 @@ public:
 
   [[nodiscard]] float getSignalFrequency() const;
   [[nodiscard]] bool getIsStalled() const;
+  [[nodiscard]] uint32_t getEdgeCount() const;
 };
 
 #endif

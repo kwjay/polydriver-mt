@@ -14,11 +14,14 @@ public:
   uint32_t getLastIntervalUs() const { return lastInterval; }
   uint16_t getMissedCycles() const { return missedCycles; }
 
+  uint32_t takeMaxIntervalUs();
+
 private:
   uint32_t period;
   uint32_t nextDueUs{0};
   uint32_t lastFireUs{0};
   uint32_t lastInterval{0};
+  uint32_t maxInterval{0};
   uint16_t missedCycles{0};
   bool started{false};
 };

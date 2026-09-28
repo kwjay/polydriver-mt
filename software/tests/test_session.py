@@ -107,7 +107,7 @@ class TestPolydriverSession(unittest.TestCase):
 		def respond():
 			self.assertTrue(wait_until(lambda: len(self.worker.sent) == 1))
 			target_id, cmd, payload = self.worker.sent[0]
-			status_payload = struct.pack("<fBB", 42.0, 128, 0)
+			status_payload = struct.pack("<ffBBIIHHHH", 42.0, 0.0, 128, 0, 0, 0, 0, 0, 0, 0)
 			self.worker.rx_queue.put(
 				ResponseFrame(source_id=target_id, command=RESP_STATUS, length=len(status_payload), payload=status_payload)
 			)
@@ -147,7 +147,7 @@ class TestPolydriverSession(unittest.TestCase):
 
 			self.assertTrue(wait_until(lambda: len(self.worker.sent) == 2))
 			target_id, cmd, payload = self.worker.sent[1]
-			status_payload = struct.pack("<fBB", 7.0, 64, 0)
+			status_payload = struct.pack("<ffBBIIHHHH", 7.0, 0.0, 64, 0, 0, 0, 0, 0, 0, 0)
 			self.worker.rx_queue.put(
 				ResponseFrame(source_id=target_id, command=RESP_STATUS, length=len(status_payload), payload=status_payload)
 			)
@@ -236,7 +236,7 @@ class TestPolydriverSessionPolling(unittest.TestCase):
 			while time.time() < deadline and answered < 2:
 				if len(worker.sent) > answered:
 					target_id, cmd, payload = worker.sent[answered]
-					status_payload = struct.pack("<fBB", 5.0 + answered, 10, 0)
+					status_payload = struct.pack("<ffBBIIHHHH", 5.0 + answered, 0.0, 10, 0, 0, 0, 0, 0, 0, 0)
 					worker.rx_queue.put(
 						ResponseFrame(source_id=target_id, command=RESP_STATUS, length=len(status_payload), payload=status_payload)
 					)

@@ -7,6 +7,12 @@ void PeriodicTimer::reset(uint32_t nowMicros) {
   started = true;
 }
 
+uint32_t PeriodicTimer::takeMaxIntervalUs() {
+  uint32_t result = maxInterval;
+  maxInterval = 0;
+  return result;
+}
+
 bool PeriodicTimer::due(uint32_t nowMicros) {
   if (!started) {
     reset(nowMicros);
@@ -17,6 +23,7 @@ bool PeriodicTimer::due(uint32_t nowMicros) {
 
   lastInterval = nowMicros - lastFireUs;
   lastFireUs = nowMicros;
+  if (lastInterval > maxInterval) maxInterval = lastInterval;
 
   nextDueUs += period;
 

@@ -16,7 +16,7 @@ void test_ema_filter_initialization(void) {
 
 void test_ema_filter_smoothing(void) {
 	EMAFilter filter;
-	float result1 = filter.filter(10.0f);
+	filter.filter(10.0f);
 	float result2 = filter.filter(20.0f);
 	float expected = (0.2f * 20.0f) + (0.8f * 10.0f);
 	TEST_ASSERT_EQUAL_FLOAT(expected, result2);
@@ -35,7 +35,7 @@ void test_ema_filter_reset(void) {
 void test_ema_filter_set_alpha(void) {
 	EMAFilter filter;
 	filter.setAlpha(0.5f);
-	float result1 = filter.filter(10.0f);
+	filter.filter(10.0f);
 	float result2 = filter.filter(20.0f);
 	float expected = (0.5f * 20.0f) + (0.5f * 10.0f);
 	TEST_ASSERT_EQUAL_FLOAT(expected, result2);
@@ -44,7 +44,7 @@ void test_ema_filter_set_alpha(void) {
 void test_ema_filter_invalid_alpha(void) {
 	EMAFilter filter;
 	filter.setAlpha(-0.1f); 
-	float result1 = filter.filter(10.0f);
+	filter.filter(10.0f);
 	float result2 = filter.filter(20.0f);
 	float expected = (0.2f * 20.0f) + (0.8f * 10.0f); 
 	TEST_ASSERT_EQUAL_FLOAT(expected, result2);

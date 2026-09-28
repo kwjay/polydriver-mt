@@ -41,7 +41,8 @@ void test_hardware_loopback_frequency() {
 
 void test_stalled_signal_timeout() {
   pwm.setDutyCycle(0); 
-  delay(600); 
+  // Stall is declared 2-3 overflow periods (524-786 ms) after the last edge.
+  delay(900);
   TEST_ASSERT_TRUE(encoder.getIsStalled()); 
   TEST_ASSERT_EQUAL_FLOAT(0.0f, encoder.getSignalFrequency()); 
 }

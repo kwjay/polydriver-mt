@@ -9,14 +9,17 @@ float PIDRegulator::calculate(float setpoint, float measuredValue, float dt) {
   integralTerm += (ki * error * dt);
   if (integralTerm > outMax) integralTerm = outMax;
   else if (integralTerm < outMin) integralTerm = outMin;
-
-  float dError = (error - previousError) / dt;
-  float dTerm = kd * dError;
   
+  float dTerm = 0.0f;
+  if (hasPreviousMeasurement) {
+    dTerm = -kd * (measuredValue - previousMeasurement) / dt;
+  }
+  previousMeasurement = measuredValue;
+  hasPreviousMeasurement = true;
+
   float output = pTerm + integralTerm + dTerm;
   if (output > outMax) output = outMax;
   else if (output < outMin) output = outMin;
-  previousError = error;
   return output;
 }
 
@@ -28,5 +31,6 @@ void PIDRegulator::setTunings(float p, float i, float d) {
 
 void PIDRegulator::reset() {
   integralTerm = 0.0f;
-  previousError = 0.0f;
+  previousMeasurement = 0.0f;
+  hasPreviousMeasurement = false;
 }

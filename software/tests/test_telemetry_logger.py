@@ -58,6 +58,27 @@ class TestTelemetryLogger(unittest.TestCase):
 		rows = self._read_rows()
 		self.assertEqual(rows[0]["target_speed"], "33.0")
 
+	def test_record_status_writes_the_v2_fields(self):
+		logger = TelemetryLogger(self.path)
+		report = StatusReport(
+			frequency=10.5, pwm=100, is_stalled=False, filtered_frequency=10.25, stall_fault=True,
+			regulating=True, device_us=123456, edge_count=789, missed_cycles=2,
+			max_loop_interval_us=10400, frame_timeouts=1, crc_errors=4,
+		)
+		logger.record_status(1, report, timestamp=1000.0)
+		logger.close()
+
+		row = self._read_rows()[0]
+		self.assertEqual(row["filtered_frequency"], "10.25")
+		self.assertEqual(row["stall_fault"], "1")
+		self.assertEqual(row["regulating"], "1")
+		self.assertEqual(row["device_us"], "123456")
+		self.assertEqual(row["edge_count"], "789")
+		self.assertEqual(row["missed_cycles"], "2")
+		self.assertEqual(row["max_loop_interval_us"], "10400")
+		self.assertEqual(row["frame_timeouts"], "1")
+		self.assertEqual(row["crc_errors"], "4")
+
 	def test_record_settings_appends_a_row_with_no_status_fields(self):
 		logger = TelemetryLogger(self.path)
 		logger.record_settings(1, SettingsReport(kp=1.0, ki=0.2, kd=0.05, speed=10.0), timestamp=2000.0)
@@ -76,6 +97,9 @@ class TestTelemetryLogger(unittest.TestCase):
 		self.assertEqual(row["pwm"], "")
 		self.assertEqual(row["is_stalled"], "")
 		self.assertEqual(row["target_speed"], "")
+		self.assertEqual(row["filtered_frequency"], "")
+		self.assertEqual(row["device_us"], "")
+		self.assertEqual(row["crc_errors"], "")
 
 	def test_status_and_settings_rows_interleave_in_one_file(self):
 		logger = TelemetryLogger(self.path)

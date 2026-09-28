@@ -54,6 +54,23 @@ class TestLinkLayer(unittest.TestCase):
             self.assertEqual(parsed_result.length, 6)
             self.assertEqual(parsed_result.payload, payload)
 
+    def test_parser_accepts_a_full_size_status_response(self):
+        payload = bytes(range(MAX_RESPONSE_PAYLOAD_LEN))
+        body = bytes([0x01, RESP_STATUS, len(payload)]) + payload
+        frame = bytes([STX]) + body + bytes([calculate_crc8(body), ETX])
+        parsed_result = None
+        for byte in frame:
+            parsed_result = self.parser.process_byte(byte)
+        self.assertIsNotNone(parsed_result)
+        self.assertEqual(parsed_result.payload, payload)
+
+    def test_parser_rejects_a_length_above_the_response_limit(self):
+        parsed_result = None
+        for byte in bytes([STX, 0x01, RESP_STATUS, MAX_RESPONSE_PAYLOAD_LEN + 1]):
+            parsed_result = self.parser.process_byte(byte)
+        self.assertIsNone(parsed_result)
+        self.assertEqual(self.parser.state, RxState.WAIT_STX)
+
     def test_parser_crc_rejection(self):
         target_id = 0x01
         cmd = RESP_ACK

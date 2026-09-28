@@ -10,6 +10,9 @@ from comms.constants import (
     RESP_NACK,
     RESP_STATUS,
     RESP_SETTINGS,
+    STATUS_PAYLOAD_FORMAT,
+    STATUS_PAYLOAD_LEN,
+    StatusFlag,
 )
 from comms.link_layer import ResponseFrame
 from .base_job import BaseJob
@@ -20,6 +23,10 @@ class JobError(Exception):
 
 
 class JobNackError(JobError):
+    ...
+
+
+class PayloadFormatError(JobError):
     ...
 
 
@@ -36,6 +43,16 @@ class StatusReport:
     frequency: float
     pwm: int
     is_stalled: bool
+    filtered_frequency: float = 0.0
+    stall_fault: bool = False
+    regulating: bool = False
+    comms_lost: bool = False
+    device_us: int = 0
+    edge_count: int = 0
+    missed_cycles: int = 0
+    max_loop_interval_us: int = 0
+    frame_timeouts: int = 0
+    crc_errors: int = 0
 
 
 @dataclass(frozen=True)
@@ -113,8 +130,31 @@ class RequestStatusJob(BaseJob):
     def handle_response(self, response_frame: ResponseFrame) -> StatusReport:
         if response_frame.command != RESP_STATUS:
             raise UnexpectedResponseError((RESP_STATUS,), response_frame.command)
-        frequency, pwm, is_stalled = struct.unpack("<fBB", response_frame.payload)
-        return StatusReport(frequency=frequency, pwm=pwm, is_stalled=bool(is_stalled))
+        if len(response_frame.payload) != STATUS_PAYLOAD_LEN:
+            raise PayloadFormatError(
+                f"STATUS payload is {len(response_frame.payload)} bytes, expected {STATUS_PAYLOAD_LEN}"
+                " - firmware and host protocol versions differ"
+            )
+        (raw, filtered, pwm, flags, device_us, edges,
+         missed, max_interval, frame_timeouts, crc_errors) = struct.unpack(
+            STATUS_PAYLOAD_FORMAT, response_frame.payload
+        )
+        flags = StatusFlag(flags)
+        return StatusReport(
+            frequency=raw,
+            pwm=pwm,
+            is_stalled=StatusFlag.ENCODER_STALLED in flags,
+            filtered_frequency=filtered,
+            stall_fault=StatusFlag.STALL_FAULT in flags,
+            regulating=StatusFlag.REGULATING in flags,
+            comms_lost=StatusFlag.COMMS_LOST in flags,
+            device_us=device_us,
+            edge_count=edges,
+            missed_cycles=missed,
+            max_loop_interval_us=max_interval,
+            frame_timeouts=frame_timeouts,
+            crc_errors=crc_errors,
+        )
 
 
 class RequestSettingsJob(BaseJob):

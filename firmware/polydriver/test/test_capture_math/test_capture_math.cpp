@@ -29,6 +29,39 @@ void test_frequency_matches_the_timer_configuration() {
 void test_minimum_measurable_frequency() {
 	// Two full 16-bit timer periods at 4us per tick is the stall threshold.
 	TEST_ASSERT_FLOAT_WITHIN(0.001f, 1.907f, capture_math::minMeasurableFrequency());
+	TEST_ASSERT_EQUAL_FLOAT(capture_math::frequencyFromPeriod(capture_math::STALL_TIMEOUT_TICKS),
+	                        capture_math::minMeasurableFrequency());
+}
+
+void test_edge_just_before_an_overflow_times_out_two_periods_later() {
+	uint32_t edge = capture_math::reconstructTimestamp(10, 0xFFFF);
+	TEST_ASSERT_FALSE(capture_math::edgeTimedOut(11, edge));
+	TEST_ASSERT_FALSE(capture_math::edgeTimedOut(12, edge));
+	TEST_ASSERT_TRUE(capture_math::edgeTimedOut(13, edge));
+}
+
+void test_edge_just_after_an_overflow_times_out_two_periods_later() {
+	uint32_t edge = capture_math::reconstructTimestamp(10, 0x0001);
+	TEST_ASSERT_FALSE(capture_math::edgeTimedOut(11, edge));
+	TEST_ASSERT_FALSE(capture_math::edgeTimedOut(12, edge));
+	TEST_ASSERT_TRUE(capture_math::edgeTimedOut(13, edge));
+}
+
+void test_period_below_the_threshold_never_times_out_whatever_the_phase() {
+	const uint32_t period = capture_math::TCNT_MAX_VALUE + capture_math::TCNT_MAX_VALUE / 2;
+	for (uint32_t phase = 0; phase < capture_math::TCNT_MAX_VALUE; phase += 997) {
+		uint32_t edge = capture_math::reconstructTimestamp(100, 0) + phase;
+		uint32_t next = edge + period;
+		for (uint32_t ovf = 101; (ovf << 16) < next; ovf++) {
+			TEST_ASSERT_FALSE(capture_math::edgeTimedOut(ovf, edge));
+		}
+	}
+}
+
+void test_edge_timeout_survives_a_timestamp_wrap() {
+	uint32_t edge = capture_math::reconstructTimestamp(0xFFFF, 0xFFF0);
+	TEST_ASSERT_FALSE(capture_math::edgeTimedOut(0x10001, edge));
+	TEST_ASSERT_TRUE(capture_math::edgeTimedOut(0x10002, edge));
 }
 
 int main(void) {
@@ -38,5 +71,9 @@ int main(void) {
 	RUN_TEST(test_zero_period_reports_no_signal);
 	RUN_TEST(test_frequency_matches_the_timer_configuration);
 	RUN_TEST(test_minimum_measurable_frequency);
+	RUN_TEST(test_edge_just_before_an_overflow_times_out_two_periods_later);
+	RUN_TEST(test_edge_just_after_an_overflow_times_out_two_periods_later);
+	RUN_TEST(test_period_below_the_threshold_never_times_out_whatever_the_phase);
+	RUN_TEST(test_edge_timeout_survives_a_timestamp_wrap);
 	return UNITY_END();
 }

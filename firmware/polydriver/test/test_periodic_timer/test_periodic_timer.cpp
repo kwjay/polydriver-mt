@@ -78,6 +78,19 @@ void test_timer_reset_rearms_from_the_given_moment() {
 	TEST_ASSERT_TRUE(timer.due(15000));
 }
 
+void test_timer_tracks_the_longest_interval_until_taken() {
+	PeriodicTimer timer(PERIOD);
+	timer.due(0);
+	timer.due(PERIOD);
+	timer.due(2 * PERIOD + 750);
+	timer.due(3 * PERIOD);
+	TEST_ASSERT_EQUAL_UINT32(PERIOD + 750, timer.takeMaxIntervalUs());
+
+	TEST_ASSERT_EQUAL_UINT32(0, timer.takeMaxIntervalUs());
+	timer.due(4 * PERIOD);
+	TEST_ASSERT_EQUAL_UINT32(PERIOD, timer.takeMaxIntervalUs());
+}
+
 int main(void) {
 	UNITY_BEGIN();
 	RUN_TEST(test_timer_first_call_starts_the_schedule_without_firing);
@@ -88,5 +101,6 @@ int main(void) {
 	RUN_TEST(test_timer_reports_the_measured_interval);
 	RUN_TEST(test_timer_survives_a_micros_rollover);
 	RUN_TEST(test_timer_reset_rearms_from_the_given_moment);
+	RUN_TEST(test_timer_tracks_the_longest_interval_until_taken);
 	return UNITY_END();
 }

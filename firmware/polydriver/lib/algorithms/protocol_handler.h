@@ -9,7 +9,9 @@ constexpr uint8_t ETX   = 0x03;
 
 // Must match MAX_PAYLOAD_LEN in software/comms/constants.py.
 constexpr uint8_t MAX_PAYLOAD_LEN = 16;
-constexpr uint8_t MAX_RESPONSE_PAYLOAD_LEN = 16;
+// Largest outbound payload is RESP_STATUS. Must match MAX_RESPONSE_PAYLOAD_LEN in
+// software/comms/constants.py.
+constexpr uint8_t MAX_RESPONSE_PAYLOAD_LEN = 26;
 
 // STX | ID | CMD | LEN | ...payload... | CRC | ETX
 constexpr uint8_t FRAME_OVERHEAD = 6;
@@ -29,6 +31,32 @@ enum class NackReason : uint8_t {
   BAD_CRC         = 0x01,  // checksum over ID|CMD|LEN|payload did not match
   BAD_LENGTH      = 0x02,  // opcode understood, payload the wrong size for it
   UNKNOWN_COMMAND = 0x03   // opcode not implemented by this firmware
+};
+
+// RESP_STATUS payload, little-endian. Mirrored in software/jobs/jobs.py.
+//  0 float    raw frequency [Hz]        14 uint32 encoder edge count
+//  4 float    filtered frequency [Hz]   18 uint16 control-loop resync events
+//  8 uint8    PWM duty                  20 uint16 longest loop interval since last STATUS [us]
+//  9 uint8    StatusFlag bits           22 uint16 abandoned frames (inter-byte timeout)
+// 10 uint32   device micros()           24 uint16 received frames with bad CRC
+constexpr uint8_t STATUS_PAYLOAD_LEN = 26;
+
+namespace StatusFlag {
+constexpr uint8_t ENCODER_STALLED = 0x01;
+constexpr uint8_t STALL_FAULT     = 0x02;
+constexpr uint8_t REGULATING      = 0x04;
+constexpr uint8_t COMMS_LOST      = 0x08;
+}
+
+struct TelemetrySnapshot {
+  float rawFrequency{0.0f};
+  float filteredFrequency{0.0f};
+  uint8_t pwm{0};
+  uint8_t flags{0};
+  uint32_t deviceMicros{0};
+  uint32_t edgeCount{0};
+  uint16_t missedCycles{0};
+  uint32_t maxLoopIntervalUs{0};  // sent saturated to 16 bits
 };
 
 enum class CommandEvent {
@@ -80,6 +108,7 @@ private:
   uint32_t lastByteMs{0};
   uint16_t frameTimeoutMs{DEFAULT_FRAME_TIMEOUT_MS};
   uint16_t frameTimeouts{0};
+  uint16_t crcErrors{0};
 
   uint8_t calculateCRC8(const uint8_t* data, uint8_t len);
   void sendResponse(uint8_t cmd, const uint8_t* payload, uint8_t len);
@@ -93,9 +122,10 @@ public:
   void setTimeSource(TimeSource callback) { timeFunc = callback; }
   void setFrameTimeout(uint16_t ms) { frameTimeoutMs = ms; }
   uint16_t getFrameTimeouts() const { return frameTimeouts; }
+  uint16_t getCrcErrors() const { return crcErrors; }
 
   CommandEvent processByte(uint8_t b);
-  void sendTelemetry(float frequency, uint8_t pwm, uint8_t isStalled);
+  void sendTelemetry(const TelemetrySnapshot& snapshot);
   const float& getSpeed() const { return parsedSpeed; }
   const PidSettings& getPidSettings() const { return  parsedPid; }
   void sendSettings(float kp, float ki, float kd, float speed);

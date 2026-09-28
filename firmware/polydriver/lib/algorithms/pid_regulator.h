@@ -8,7 +8,8 @@ class PIDRegulator {
   float kd{0.1f};
 
   float integralTerm{0.0f};
-  float previousError{0.0f};
+  float previousMeasurement{0.0f};
+  bool hasPreviousMeasurement{false};
 
   static constexpr float outMin{0.0f};
   static constexpr float outMax{255.0f};

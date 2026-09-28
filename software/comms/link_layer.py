@@ -59,7 +59,7 @@ class ProtocolParser:
 
         elif self.state == RxState.READ_LEN:
             self.rx_length = b
-            if self.rx_length > MAX_PAYLOAD_LEN:
+            if self.rx_length > MAX_RESPONSE_PAYLOAD_LEN:
                 self.state = RxState.WAIT_STX
             else:
                 self.state = (

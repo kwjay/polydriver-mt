@@ -218,8 +218,11 @@ class TestPolydriverShell(unittest.TestCase):
 		shell.onecmd("status 1")
 		text = out.getvalue()
 		self.assertIn("frequency=1.00", text)
+		self.assertIn("filtered=0.00", text)
 		self.assertIn("pwm=2", text)
 		self.assertIn("stalled=False", text)
+		self.assertIn("fault=False", text)
+		self.assertIn("crc_errors=0", text)
 
 	def test_settings_prints_report_fields(self):
 		shell, session, out = make_shell()

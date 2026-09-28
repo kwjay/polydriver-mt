@@ -409,6 +409,104 @@ void test_protocol_frame_timeout_is_configurable() {
 	TEST_ASSERT_EQUAL_UINT16(1, handler.getFrameTimeouts());
 }
 
+static float readFloat(const uint8_t* p) {
+	union { float f; uint8_t b[4]; } conv;
+	memcpy(conv.b, p, 4);
+	return conv.f;
+}
+
+static uint32_t readU32(const uint8_t* p) {
+	return static_cast<uint32_t>(p[0]) | (static_cast<uint32_t>(p[1]) << 8) |
+	       (static_cast<uint32_t>(p[2]) << 16) | (static_cast<uint32_t>(p[3]) << 24);
+}
+
+static uint16_t readU16(const uint8_t* p) {
+	return static_cast<uint16_t>(p[0] | (p[1] << 8));
+}
+
+static void pushBadCrcFrame(ProtocolHandler& handler) {
+	handler.processByte(STX);
+	handler.processByte(MY_ID);
+	handler.processByte(CMD_REQ_STAT);
+	handler.processByte(0);
+	handler.processByte(0xFF);
+	handler.processByte(ETX);
+}
+
+void test_protocol_status_frame_layout() {
+	ProtocolHandler handler;
+	handler.setTxCallback(dummyTxCallback);
+
+	TelemetrySnapshot s;
+	s.rawFrequency = 123.5f;
+	s.filteredFrequency = 120.25f;
+	s.pwm = 200;
+	s.flags = StatusFlag::STALL_FAULT | StatusFlag::REGULATING;
+	s.deviceMicros = 0xA1B2C3D4UL;
+	s.edgeCount = 0x01020304UL;
+	s.missedCycles = 0x1234;
+	s.maxLoopIntervalUs = 10250;
+	handler.sendTelemetry(s);
+
+	TEST_ASSERT_EQUAL_UINT8(FRAME_OVERHEAD + STATUS_PAYLOAD_LEN, txLength);
+	TEST_ASSERT_EQUAL_HEX8(STX, txBuffer[0]);
+	TEST_ASSERT_EQUAL_HEX8(MY_ID, txBuffer[1]);
+	TEST_ASSERT_EQUAL_HEX8(RESP_STATUS, responseCommand());
+	TEST_ASSERT_EQUAL_UINT8(STATUS_PAYLOAD_LEN, responsePayloadLength());
+
+	const uint8_t* p = &txBuffer[4];
+	TEST_ASSERT_EQUAL_FLOAT(123.5f, readFloat(&p[0]));
+	TEST_ASSERT_EQUAL_FLOAT(120.25f, readFloat(&p[4]));
+	TEST_ASSERT_EQUAL_UINT8(200, p[8]);
+	TEST_ASSERT_EQUAL_HEX8(0x06, p[9]);
+	TEST_ASSERT_EQUAL_HEX32(0xA1B2C3D4UL, readU32(&p[10]));
+	TEST_ASSERT_EQUAL_HEX32(0x01020304UL, readU32(&p[14]));
+	TEST_ASSERT_EQUAL_HEX16(0x1234, readU16(&p[18]));
+	TEST_ASSERT_EQUAL_UINT16(10250, readU16(&p[20]));
+	TEST_ASSERT_EQUAL_UINT16(0, readU16(&p[22]));
+	TEST_ASSERT_EQUAL_UINT16(0, readU16(&p[24]));
+
+	TEST_ASSERT_EQUAL_HEX8(calculateTestCRC8(&txBuffer[1], 3 + STATUS_PAYLOAD_LEN), txBuffer[4 + STATUS_PAYLOAD_LEN]);
+	TEST_ASSERT_EQUAL_HEX8(ETX, txBuffer[5 + STATUS_PAYLOAD_LEN]);
+}
+
+void test_protocol_status_saturates_the_loop_interval() {
+	ProtocolHandler handler;
+	handler.setTxCallback(dummyTxCallback);
+	TelemetrySnapshot s;
+	s.maxLoopIntervalUs = 200000UL;
+	handler.sendTelemetry(s);
+	TEST_ASSERT_EQUAL_UINT16(0xFFFF, readU16(&txBuffer[4 + 20]));
+}
+
+void test_protocol_counts_received_crc_errors() {
+	ProtocolHandler handler;
+	handler.setTxCallback(dummyTxCallback);
+	pushBadCrcFrame(handler);
+	pushBadCrcFrame(handler);
+	TEST_ASSERT_EQUAL_UINT16(2, handler.getCrcErrors());
+
+	pushValidFrame(handler, CMD_REQ_STAT, nullptr, 0);
+	TEST_ASSERT_EQUAL_UINT16(2, handler.getCrcErrors());
+}
+
+void test_protocol_status_carries_the_link_counters() {
+	ProtocolHandler handler;
+	handler.setTxCallback(dummyTxCallback);
+	handler.setTimeSource(fakeMillis);
+
+	pushBadCrcFrame(handler);
+	handler.processByte(STX);
+	handler.processByte(MY_ID);
+	fakeNow += 50;
+	pushValidFrame(handler, CMD_REQ_STAT, nullptr, 0);
+
+	TelemetrySnapshot s;
+	handler.sendTelemetry(s);
+	TEST_ASSERT_EQUAL_UINT16(1, readU16(&txBuffer[4 + 22]));
+	TEST_ASSERT_EQUAL_UINT16(1, readU16(&txBuffer[4 + 24]));
+}
+
 int main(void) {
 	UNITY_BEGIN();
 	RUN_TEST(test_protocol_set_speed);
@@ -432,5 +530,9 @@ int main(void) {
 	RUN_TEST(test_protocol_counts_one_timeout_per_abandoned_frame);
 	RUN_TEST(test_protocol_timeout_survives_a_millis_rollover);
 	RUN_TEST(test_protocol_frame_timeout_is_configurable);
+	RUN_TEST(test_protocol_status_frame_layout);
+	RUN_TEST(test_protocol_status_saturates_the_loop_interval);
+	RUN_TEST(test_protocol_counts_received_crc_errors);
+	RUN_TEST(test_protocol_status_carries_the_link_counters);
 	return UNITY_END();
 }
