@@ -22,7 +22,7 @@ void InputCapture::handleInputCapture() {
     TIFR1 = _BV(TOV1);
     overflowCount = currentOverflow;
   }
-  
+
   uint32_t currentTimestamp = capture_math::reconstructTimestamp(currentOverflow, capture);
   if (!isStalled) {
     period = currentTimestamp - previousTimestamp;

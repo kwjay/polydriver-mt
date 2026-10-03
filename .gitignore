@@ -13,7 +13,6 @@ __pycache__/
 *.elf
 
 # Editor & OS settings
-.vscode/
 .vscode/*
 !.vscode/settings.json
 !.vscode/tasks.json
@@ -31,3 +30,6 @@ docs/
 # Python test output
 software/tests/test_logs/*
 !software/tests/test_logs/.gitkeep
+
+
+obsidian-vault/

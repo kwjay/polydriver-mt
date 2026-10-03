@@ -9,7 +9,7 @@ float PIDRegulator::calculate(float setpoint, float measuredValue, float dt) {
   integralTerm += (ki * error * dt);
   if (integralTerm > outMax) integralTerm = outMax;
   else if (integralTerm < outMin) integralTerm = outMin;
-  
+
   float dTerm = 0.0f;
   if (hasPreviousMeasurement) {
     dTerm = -kd * (measuredValue - previousMeasurement) / dt;

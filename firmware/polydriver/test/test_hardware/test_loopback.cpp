@@ -51,7 +51,7 @@ void setup() {
   UNITY_BEGIN();
   pwm.init();
   encoder.init();
-  
+
   RUN_TEST(test_pwm_clamping);
   RUN_TEST(test_hardware_loopback_frequency);
   RUN_TEST(test_stalled_signal_timeout);
