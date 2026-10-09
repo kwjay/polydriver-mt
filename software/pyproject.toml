@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools==75.8.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "polydriver"
+version = "0.1.0"
+description = "Host software for the PolydriverMT two-channel gradient dispenser"
+requires-python = "~=3.12.0"
+dependencies = [
+    "pyserial==3.5",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest==9.1.1",
+]
+
+
+[tool.setuptools.packages.find]
+include = ["polydriver*"]               
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]                   # legacy/ tests are never collected
+addopts = ["-ra", "--strict-markers", "--strict-config", "--import-mode=importlib"]
+xfail_strict = true
+filterwarnings = ["error"]
+markers = [
+    "hardware: needs a real board on a COM port",
+]
