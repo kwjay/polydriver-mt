@@ -3,7 +3,7 @@
 
 class EMAFilter {
 public:
-  static constexpr float DEFAULT_ALPHA = 0.2f;
+  static constexpr float DEFAULT_ALPHA = 1.0f;
 
   float filter(float sample);
   void reset();
