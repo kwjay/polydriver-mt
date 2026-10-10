@@ -1,5 +1,6 @@
 #include <unity.h>
 #include <math.h>
+#include <limits>
 #include "EMAFilter.h"
 
 void setUp(void) {}
@@ -60,7 +61,9 @@ void test_ema_filter_alpha_one_passes_samples_through(void) {
 void test_ema_filter_rejects_invalid_alpha_and_keeps_the_old_one(void) {
   EMAFilter filter;
   filter.setAlpha(0.2f);
-  const float invalid[] = {-0.1f, 0.0f, 1.0001f, 2.0f, NAN, INFINITY};
+  const float invalid[] = {-0.1f, 0.0f, 1.0001f, 2.0f,
+                           std::numeric_limits<float>::quiet_NaN(),
+                           std::numeric_limits<float>::infinity()};
   for (float alpha : invalid) {
     TEST_ASSERT_FALSE(filter.setAlpha(alpha));
     TEST_ASSERT_EQUAL_FLOAT(0.2f, filter.getAlpha());

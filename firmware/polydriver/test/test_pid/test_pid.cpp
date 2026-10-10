@@ -1,5 +1,5 @@
 #include <unity.h>
-#include <math.h>
+#include <limits>
 #include "PIDRegulator.h"
 
 void setUp(void) {}
@@ -94,13 +94,14 @@ void test_pid_set_tunings() {
 }
 
 void test_pid_rejects_negative_or_nan_gains_and_keeps_the_old_ones() {
+  const float nan = std::numeric_limits<float>::quiet_NaN();
   PIDRegulator pid(1.0f, 2.0f, 3.0f);
   TEST_ASSERT_FALSE(pid.setTunings(-0.1f, 2.0f, 3.0f));
   TEST_ASSERT_FALSE(pid.setTunings(1.0f, -0.1f, 3.0f));
   TEST_ASSERT_FALSE(pid.setTunings(1.0f, 2.0f, -0.1f));
-  TEST_ASSERT_FALSE(pid.setTunings(NAN, 2.0f, 3.0f));
-  TEST_ASSERT_FALSE(pid.setTunings(1.0f, NAN, 3.0f));
-  TEST_ASSERT_FALSE(pid.setTunings(1.0f, 2.0f, NAN));
+  TEST_ASSERT_FALSE(pid.setTunings(nan, 2.0f, 3.0f));
+  TEST_ASSERT_FALSE(pid.setTunings(1.0f, nan, 3.0f));
+  TEST_ASSERT_FALSE(pid.setTunings(1.0f, 2.0f, nan));
   TEST_ASSERT_EQUAL_FLOAT(1.0f, pid.getKp());
   TEST_ASSERT_EQUAL_FLOAT(2.0f, pid.getKi());
   TEST_ASSERT_EQUAL_FLOAT(3.0f, pid.getKd());
