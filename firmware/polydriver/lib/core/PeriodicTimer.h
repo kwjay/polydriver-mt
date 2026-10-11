@@ -5,7 +5,7 @@
 
 class PeriodicTimer {
 public:
-  explicit PeriodicTimer(uint32_t periodUs) : periodUs(periodUs) {}
+  explicit PeriodicTimer(uint32_t timerPeriodUs) : periodUs(timerPeriodUs) {}
 
   bool due(uint32_t nowUs);
   void reset(uint32_t nowUs);
