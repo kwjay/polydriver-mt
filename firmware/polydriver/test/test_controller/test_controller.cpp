@@ -82,13 +82,15 @@ void test_controller_arms_on_a_positive_target() {
   TEST_ASSERT_EQUAL_FLOAT(100.0f, controller.getTargetSpeedHz());
 }
 
-void test_controller_rejects_a_negative_or_nan_target() {
+void test_controller_rejects_a_negative_nan_or_infinite_target() {
   DispenserController controller;
   configure(controller);
   controller.setTargetSpeedHz(50.0f);
   assertResult(ControlResult::BAD_VALUE, controller.setTargetSpeedHz(-1.0f));
   assertResult(ControlResult::BAD_VALUE,
                controller.setTargetSpeedHz(std::numeric_limits<float>::quiet_NaN()));
+  assertResult(ControlResult::BAD_VALUE,
+               controller.setTargetSpeedHz(std::numeric_limits<float>::infinity()));
   TEST_ASSERT_EQUAL_FLOAT(50.0f, controller.getTargetSpeedHz());
 }
 
@@ -392,7 +394,7 @@ int main(void) {
   RUN_TEST(test_controller_rejected_tunings_do_not_configure_it);
   RUN_TEST(test_controller_all_zero_tunings_configure_it);
   RUN_TEST(test_controller_arms_on_a_positive_target);
-  RUN_TEST(test_controller_rejects_a_negative_or_nan_target);
+  RUN_TEST(test_controller_rejects_a_negative_nan_or_infinite_target);
   RUN_TEST(test_controller_drives_output_up_when_below_setpoint);
   RUN_TEST(test_controller_output_is_clamped_to_the_pwm_range);
   RUN_TEST(test_controller_zero_target_disarms_and_commands_zero);

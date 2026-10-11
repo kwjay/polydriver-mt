@@ -15,6 +15,8 @@ public:
   float getKd() const { return kd; }
 
 private:
+  static bool isValidGain(float gain);
+
   static constexpr float OUTPUT_MIN = 0.0f;
   static constexpr float OUTPUT_MAX = 255.0f;
 

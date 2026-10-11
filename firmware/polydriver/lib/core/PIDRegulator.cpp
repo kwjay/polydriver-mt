@@ -1,4 +1,5 @@
 #include "PIDRegulator.h"
+#include <float.h>
 
 PIDRegulator::PIDRegulator(float initialKp, float initialKi, float initialKd)
     : kp(initialKp), ki(initialKi), kd(initialKd) {}
@@ -26,11 +27,15 @@ float PIDRegulator::calculate(float setpoint, float measurement, float dtS) {
 }
 
 bool PIDRegulator::setTunings(float newKp, float newKi, float newKd) {
-  if (!(newKp >= 0.0f && newKi >= 0.0f && newKd >= 0.0f)) return false;
+  if (!(isValidGain(newKp) && isValidGain(newKi) && isValidGain(newKd))) return false;
   kp = newKp;
   ki = newKi;
   kd = newKd;
   return true;
+}
+
+bool PIDRegulator::isValidGain(float gain) {
+  return gain >= 0.0f && gain <= FLT_MAX;
 }
 
 void PIDRegulator::reset() {

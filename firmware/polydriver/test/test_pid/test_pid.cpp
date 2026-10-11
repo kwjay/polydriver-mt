@@ -93,7 +93,7 @@ void test_pid_set_tunings() {
   TEST_ASSERT_EQUAL_FLOAT(3.5f, pid.getKd());
 }
 
-void test_pid_rejects_negative_or_nan_gains_and_keeps_the_old_ones() {
+void test_pid_rejects_negative_nan_or_infinite_gains_and_keeps_the_old_ones() {
   const float nan = std::numeric_limits<float>::quiet_NaN();
   PIDRegulator pid(1.0f, 2.0f, 3.0f);
   TEST_ASSERT_FALSE(pid.setTunings(-0.1f, 2.0f, 3.0f));
@@ -102,6 +102,10 @@ void test_pid_rejects_negative_or_nan_gains_and_keeps_the_old_ones() {
   TEST_ASSERT_FALSE(pid.setTunings(nan, 2.0f, 3.0f));
   TEST_ASSERT_FALSE(pid.setTunings(1.0f, nan, 3.0f));
   TEST_ASSERT_FALSE(pid.setTunings(1.0f, 2.0f, nan));
+  const float inf = std::numeric_limits<float>::infinity();
+  TEST_ASSERT_FALSE(pid.setTunings(inf, 2.0f, 3.0f));
+  TEST_ASSERT_FALSE(pid.setTunings(1.0f, inf, 3.0f));
+  TEST_ASSERT_FALSE(pid.setTunings(1.0f, 2.0f, inf));
   TEST_ASSERT_EQUAL_FLOAT(1.0f, pid.getKp());
   TEST_ASSERT_EQUAL_FLOAT(2.0f, pid.getKi());
   TEST_ASSERT_EQUAL_FLOAT(3.0f, pid.getKd());
@@ -143,7 +147,7 @@ int main() {
   RUN_TEST(test_pid_zero_dt);
   RUN_TEST(test_pid_lower_bound_clamping);
   RUN_TEST(test_pid_set_tunings);
-  RUN_TEST(test_pid_rejects_negative_or_nan_gains_and_keeps_the_old_ones);
+  RUN_TEST(test_pid_rejects_negative_nan_or_infinite_gains_and_keeps_the_old_ones);
   RUN_TEST(test_pid_accepts_all_zero_gains);
   RUN_TEST(test_pid_reset);
   RUN_TEST(test_pid_reset_forgets_the_previous_measurement);

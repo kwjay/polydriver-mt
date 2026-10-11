@@ -1,9 +1,10 @@
 #include "DispenserController.h"
+#include <float.h>
 
 ControlResult DispenserController::setTargetSpeedHz(float targetHz) {
   if (estopped) return ControlResult::WRONG_STATE;
   if (mode != ControlMode::CLOSED_LOOP) return ControlResult::WRONG_MODE;
-  if (!(targetHz >= 0.0f)) return ControlResult::BAD_VALUE;
+  if (!(targetHz >= 0.0f && targetHz <= FLT_MAX)) return ControlResult::BAD_VALUE;
   if (targetHz > 0.0f && !configured) return ControlResult::NOT_CONFIGURED;
 
   targetSpeedHz = targetHz;
