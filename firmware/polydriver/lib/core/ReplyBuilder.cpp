@@ -1,27 +1,13 @@
 #include "ReplyBuilder.h"
-#include <string.h>
 #include "Crc8.h"
+#include "LittleEndian.h"
 
 using namespace ProtocolDefs;
+using LittleEndian::putFloat;
+using LittleEndian::putU16;
+using LittleEndian::putU32;
 
 namespace {
-
-void putU16(uint8_t* destination, uint16_t value) {
-  destination[0] = static_cast<uint8_t>(value);
-  destination[1] = static_cast<uint8_t>(value >> 8);
-}
-
-void putU32(uint8_t* destination, uint32_t value) {
-  for (uint8_t i = 0; i < 4; i++) destination[i] = static_cast<uint8_t>(value >> (8 * i));
-}
-
-// Copies the IEEE-754 bits into an integer first, so the byte order on the wire does not depend
-// on the CPU's own byte order.
-void putFloat(uint8_t* destination, float value) {
-  uint32_t bits;
-  memcpy(&bits, &value, sizeof(bits));
-  putU32(destination, bits);
-}
 
 uint16_t saturateU16(uint32_t value) {
   return value > 0xFFFFUL ? 0xFFFF : static_cast<uint16_t>(value);
