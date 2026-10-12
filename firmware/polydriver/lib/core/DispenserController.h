@@ -27,6 +27,7 @@ public:
   ControlResult setMode(ControlMode newMode);
   ControlResult setTunings(float kp, float ki, float kd);
   ControlResult setAlpha(float alpha);
+  ControlResult setFeedforward(float offsetDuty, float gainDutyPerHz);
   void setCommsTimeoutMs(uint16_t timeoutMs, uint32_t nowUs);
   void onHostActivity(uint32_t nowUs);
 
@@ -45,6 +46,8 @@ public:
   float getKi() const { return pid.getKi(); }
   float getKd() const { return pid.getKd(); }
   float getAlpha() const { return ema.getAlpha(); }
+  float getFeedforwardOffsetDuty() const { return feedforwardOffsetDuty; }
+  float getFeedforwardGainDutyPerHz() const { return feedforwardGainDutyPerHz; }
   uint16_t getCommsTimeoutMs() const { return commsTimeoutMs; }
 
   bool isRegulating() const { return mode == ControlMode::CLOSED_LOOP && targetSpeedHz > 0.0f; }
@@ -64,6 +67,8 @@ private:
   uint8_t dutySetpoint{0};
   float filteredFrequencyHz{0.0f};
   uint8_t outputDuty{0};
+  float feedforwardOffsetDuty{0.0f};
+  float feedforwardGainDutyPerHz{0.0f};
 
   uint16_t commsTimeoutMs{0};
   uint32_t lastHostActivityUs{0};

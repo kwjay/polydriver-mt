@@ -4,14 +4,10 @@
 PIDRegulator::PIDRegulator(float initialKp, float initialKi, float initialKd)
     : kp(initialKp), ki(initialKi), kd(initialKd) {}
 
-float PIDRegulator::calculate(float setpoint, float measurement, float dtS) {
+float PIDRegulator::calculate(float setpoint, float measurement, float dtS, float feedforward) {
   if (dtS <= 0.0f) return 0.0f;
-  float error = setpoint - measurement;
-  float pTerm = kp * error;
-
-  integralTerm += ki * error * dtS;
-  if (integralTerm > OUTPUT_MAX) integralTerm = OUTPUT_MAX;
-  else if (integralTerm < OUTPUT_MIN) integralTerm = OUTPUT_MIN;
+  const float error = setpoint - measurement;
+  const float pTerm = kp * error;
 
   float dTerm = 0.0f;
   if (hasPreviousMeasurement) {
@@ -20,10 +16,18 @@ float PIDRegulator::calculate(float setpoint, float measurement, float dtS) {
   previousMeasurement = measurement;
   hasPreviousMeasurement = true;
 
-  float output = pTerm + integralTerm + dTerm;
-  if (output > OUTPUT_MAX) output = OUTPUT_MAX;
-  else if (output < OUTPUT_MIN) output = OUTPUT_MIN;
-  return output;
+  const float otherTerms = feedforward + pTerm + dTerm;
+  float candidate = integralTerm + ki * error * dtS;
+  if (error > 0.0f) {
+    const float roomAbove = OUTPUT_MAX - otherTerms;
+    if (candidate > roomAbove) candidate = (integralTerm > roomAbove) ? integralTerm : roomAbove;
+  } else if (error < 0.0f) {
+    const float roomBelow = OUTPUT_MIN - otherTerms;
+    if (candidate < roomBelow) candidate = (integralTerm < roomBelow) ? integralTerm : roomBelow;
+  }
+  integralTerm = clamp(candidate, -OUTPUT_MAX, OUTPUT_MAX);
+
+  return clamp(otherTerms + integralTerm, OUTPUT_MIN, OUTPUT_MAX);
 }
 
 bool PIDRegulator::setTunings(float newKp, float newKi, float newKd) {
@@ -32,6 +36,12 @@ bool PIDRegulator::setTunings(float newKp, float newKi, float newKd) {
   ki = newKi;
   kd = newKd;
   return true;
+}
+
+float PIDRegulator::clamp(float value, float low, float high) {
+  if (value > high) return high;
+  if (value < low) return low;
+  return value;
 }
 
 bool PIDRegulator::isValidGain(float gain) {

@@ -154,6 +154,75 @@ void test_controller_rejects_an_invalid_alpha() {
   TEST_ASSERT_EQUAL_FLOAT(1.0f, controller.getAlpha());
 }
 
+// --- Feedforward ------------------------------------------------------------
+
+void test_controller_feedforward_is_zero_at_boot() {
+  DispenserController controller;
+  TEST_ASSERT_EQUAL_FLOAT(0.0f, controller.getFeedforwardOffsetDuty());
+  TEST_ASSERT_EQUAL_FLOAT(0.0f, controller.getFeedforwardGainDutyPerHz());
+}
+
+void test_controller_sets_the_feedforward() {
+  DispenserController controller;
+  assertResult(ControlResult::OK, controller.setFeedforward(120.0f, 0.25f));
+  TEST_ASSERT_EQUAL_FLOAT(120.0f, controller.getFeedforwardOffsetDuty());
+  TEST_ASSERT_EQUAL_FLOAT(0.25f, controller.getFeedforwardGainDutyPerHz());
+  TEST_ASSERT_FALSE(controller.isConfigured());
+}
+
+void test_controller_rejects_an_invalid_feedforward() {
+  DispenserController controller;
+  controller.setFeedforward(100.0f, 0.5f);
+  const float nan = std::numeric_limits<float>::quiet_NaN();
+  const float inf = std::numeric_limits<float>::infinity();
+  assertResult(ControlResult::BAD_VALUE, controller.setFeedforward(-1.0f, 0.5f));
+  assertResult(ControlResult::BAD_VALUE, controller.setFeedforward(255.5f, 0.5f));
+  assertResult(ControlResult::BAD_VALUE, controller.setFeedforward(nan, 0.5f));
+  assertResult(ControlResult::BAD_VALUE, controller.setFeedforward(100.0f, -0.1f));
+  assertResult(ControlResult::BAD_VALUE, controller.setFeedforward(100.0f, nan));
+  assertResult(ControlResult::BAD_VALUE, controller.setFeedforward(100.0f, inf));
+  TEST_ASSERT_EQUAL_FLOAT(100.0f, controller.getFeedforwardOffsetDuty());
+  TEST_ASSERT_EQUAL_FLOAT(0.5f, controller.getFeedforwardGainDutyPerHz());
+}
+
+void test_controller_feedforward_adds_to_the_closed_loop_output() {
+  DispenserController controller;
+  controller.setTunings(0.0f, 0.0f, 0.0f);
+  controller.setFeedforward(100.0f, 0.5f);
+  controller.setTargetSpeedHz(50.0f);
+  TEST_ASSERT_EQUAL_UINT8(125, controller.update(50.0f, 0, DT_S));
+}
+
+void test_controller_pid_can_correct_below_the_feedforward() {
+  DispenserController controller;
+  configure(controller);
+  controller.setFeedforward(100.0f, 0.0f);
+  controller.setTargetSpeedHz(50.0f);
+  TEST_ASSERT_EQUAL_UINT8(90, controller.update(60.0f, 0, DT_S));
+}
+
+void test_controller_feedforward_is_not_applied_at_zero_target() {
+  DispenserController controller;
+  configure(controller);
+  controller.setFeedforward(100.0f, 0.5f);
+  TEST_ASSERT_EQUAL_UINT8(0, controller.update(0.0f, 0, DT_S));
+}
+
+void test_controller_feedforward_is_not_applied_in_open_loop() {
+  DispenserController controller;
+  controller.setFeedforward(100.0f, 0.5f);
+  controller.setMode(ControlMode::OPEN_LOOP);
+  TEST_ASSERT_EQUAL_UINT8(0, controller.update(0.0f, 0, DT_S));
+  controller.setDuty(30);
+  TEST_ASSERT_EQUAL_UINT8(30, controller.update(0.0f, 10000, DT_S));
+}
+
+void test_controller_feedforward_is_accepted_during_estop() {
+  DispenserController controller;
+  controller.estop();
+  assertResult(ControlResult::OK, controller.setFeedforward(100.0f, 0.5f));
+}
+
 // --- Open loop and modes ------------------------------------------------------
 
 void test_controller_open_loop_outputs_the_duty_without_tunings() {
@@ -401,6 +470,14 @@ int main(void) {
   RUN_TEST(test_controller_zero_target_resets_the_integral);
   RUN_TEST(test_controller_exposes_the_filtered_measurement);
   RUN_TEST(test_controller_rejects_an_invalid_alpha);
+  RUN_TEST(test_controller_feedforward_is_zero_at_boot);
+  RUN_TEST(test_controller_sets_the_feedforward);
+  RUN_TEST(test_controller_rejects_an_invalid_feedforward);
+  RUN_TEST(test_controller_feedforward_adds_to_the_closed_loop_output);
+  RUN_TEST(test_controller_pid_can_correct_below_the_feedforward);
+  RUN_TEST(test_controller_feedforward_is_not_applied_at_zero_target);
+  RUN_TEST(test_controller_feedforward_is_not_applied_in_open_loop);
+  RUN_TEST(test_controller_feedforward_is_accepted_during_estop);
   RUN_TEST(test_controller_open_loop_outputs_the_duty_without_tunings);
   RUN_TEST(test_controller_duty_is_refused_in_closed_loop);
   RUN_TEST(test_controller_target_is_refused_in_open_loop);

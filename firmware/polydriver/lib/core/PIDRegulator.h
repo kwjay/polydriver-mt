@@ -6,7 +6,7 @@ public:
   PIDRegulator() = default;
   PIDRegulator(float initialKp, float initialKi, float initialKd);
 
-  float calculate(float setpoint, float measurement, float dtS);
+  float calculate(float setpoint, float measurement, float dtS, float feedforward = 0.0f);
   bool setTunings(float newKp, float newKi, float newKd);
   void reset();
 
@@ -16,6 +16,7 @@ public:
 
 private:
   static bool isValidGain(float gain);
+  static float clamp(float value, float low, float high);
 
   static constexpr float OUTPUT_MIN = 0.0f;
   static constexpr float OUTPUT_MAX = 255.0f;

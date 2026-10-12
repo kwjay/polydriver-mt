@@ -117,6 +117,57 @@ void test_pid_accepts_all_zero_gains() {
   TEST_ASSERT_EQUAL_FLOAT(0.0f, pid.calculate(100.0f, 0.0f, 0.01f));
 }
 
+void test_pid_feedforward_alone_sets_the_output() {
+  PIDRegulator pid;
+  TEST_ASSERT_EQUAL_FLOAT(128.0f, pid.calculate(50.0f, 50.0f, 0.01f, 128.0f));
+  TEST_ASSERT_EQUAL_FLOAT(255.0f, pid.calculate(50.0f, 50.0f, 0.01f, 300.0f));
+}
+
+void test_pid_integral_can_pull_below_the_feedforward() {
+  PIDRegulator pid(0.0f, 1.0f, 0.0f);
+  TEST_ASSERT_EQUAL_FLOAT(90.0f, pid.calculate(100.0f, 110.0f, 1.0f, 100.0f));
+}
+
+void test_pid_no_windup_while_saturated_high() {
+  PIDRegulator pid(0.0f, 1.0f, 0.0f);
+  for (int i = 0; i < 10; ++i) {
+    TEST_ASSERT_EQUAL_FLOAT(255.0f, pid.calculate(100.0f, 0.0f, 1.0f, 250.0f));
+  }
+  // The integral only grew to the 5 that 255 needed, so the first negative error acts at once.
+  TEST_ASSERT_EQUAL_FLOAT(245.0f, pid.calculate(100.0f, 110.0f, 1.0f, 250.0f));
+}
+
+void test_pid_no_windup_while_saturated_low() {
+  PIDRegulator pid(0.0f, 1.0f, 0.0f);
+  for (int i = 0; i < 10; ++i) {
+    TEST_ASSERT_EQUAL_FLOAT(0.0f, pid.calculate(100.0f, 110.0f, 1.0f));
+  }
+  TEST_ASSERT_EQUAL_FLOAT(10.0f, pid.calculate(100.0f, 90.0f, 1.0f));
+}
+
+void test_pid_a_large_p_term_does_not_drain_the_integral() {
+  PIDRegulator pid(1.0f, 1.0f, 0.0f);
+  TEST_ASSERT_EQUAL_FLOAT(20.0f, pid.calculate(100.0f, 90.0f, 1.0f));
+  TEST_ASSERT_EQUAL_FLOAT(255.0f, pid.calculate(400.0f, 90.0f, 1.0f));
+  // The integral kept its 10 while P alone saturated: 10 + 10 + 10.
+  TEST_ASSERT_EQUAL_FLOAT(30.0f, pid.calculate(100.0f, 90.0f, 1.0f));
+}
+
+void test_pid_a_large_negative_p_term_does_not_fill_the_integral() {
+  PIDRegulator pid(1.0f, 1.0f, 0.0f);
+  TEST_ASSERT_EQUAL_FLOAT(180.0f, pid.calculate(100.0f, 110.0f, 1.0f, 200.0f));
+  TEST_ASSERT_EQUAL_FLOAT(0.0f, pid.calculate(100.0f, 400.0f, 1.0f, 200.0f));
+  // The integral kept its -10 while P alone pulled the output to 0: 200 - 10 - 20.
+  TEST_ASSERT_EQUAL_FLOAT(170.0f, pid.calculate(100.0f, 110.0f, 1.0f, 200.0f));
+}
+
+void test_pid_negative_integral_is_limited() {
+  PIDRegulator pid(0.0f, 1.0f, 0.0f);
+  for (int i = 0; i < 100; ++i) pid.calculate(0.0f, 10.0f, 1.0f, 255.0f);
+  // Integral stops at -255: one step back up gives 255 - 255 + 10.
+  TEST_ASSERT_EQUAL_FLOAT(10.0f, pid.calculate(10.0f, 0.0f, 1.0f, 255.0f));
+}
+
 void test_pid_reset() {
   PIDRegulator pid(0.0f, 1.0f, 1.0f);
   pid.calculate(100.0f, 90.0f, 1.0f);
@@ -149,6 +200,13 @@ int main() {
   RUN_TEST(test_pid_set_tunings);
   RUN_TEST(test_pid_rejects_negative_nan_or_infinite_gains_and_keeps_the_old_ones);
   RUN_TEST(test_pid_accepts_all_zero_gains);
+  RUN_TEST(test_pid_feedforward_alone_sets_the_output);
+  RUN_TEST(test_pid_integral_can_pull_below_the_feedforward);
+  RUN_TEST(test_pid_no_windup_while_saturated_high);
+  RUN_TEST(test_pid_no_windup_while_saturated_low);
+  RUN_TEST(test_pid_a_large_p_term_does_not_drain_the_integral);
+  RUN_TEST(test_pid_a_large_negative_p_term_does_not_fill_the_integral);
+  RUN_TEST(test_pid_negative_integral_is_limited);
   RUN_TEST(test_pid_reset);
   RUN_TEST(test_pid_reset_forgets_the_previous_measurement);
   return UNITY_END();

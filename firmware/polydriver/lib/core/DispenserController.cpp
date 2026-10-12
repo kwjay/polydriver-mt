@@ -46,6 +46,14 @@ ControlResult DispenserController::setAlpha(float alpha) {
   return ControlResult::OK;
 }
 
+ControlResult DispenserController::setFeedforward(float offsetDuty, float gainDutyPerHz) {
+  if (!(offsetDuty >= 0.0f && offsetDuty <= 255.0f)) return ControlResult::BAD_VALUE;
+  if (!(gainDutyPerHz >= 0.0f && gainDutyPerHz <= FLT_MAX)) return ControlResult::BAD_VALUE;
+  feedforwardOffsetDuty = offsetDuty;
+  feedforwardGainDutyPerHz = gainDutyPerHz;
+  return ControlResult::OK;
+}
+
 void DispenserController::setCommsTimeoutMs(uint16_t timeoutMs, uint32_t nowUs) {
   commsTimeoutMs = timeoutMs;
   lastHostActivityUs = nowUs;
@@ -84,7 +92,8 @@ uint8_t DispenserController::update(float rawFrequencyHz, uint32_t nowUs, float 
   if (mode == ControlMode::OPEN_LOOP) {
     outputDuty = dutySetpoint;
   } else if (targetSpeedHz > 0.0f) {
-    outputDuty = static_cast<uint8_t>(pid.calculate(targetSpeedHz, filteredFrequencyHz, dtS));
+    const float feedforward = feedforwardOffsetDuty + feedforwardGainDutyPerHz * targetSpeedHz;
+    outputDuty = static_cast<uint8_t>(pid.calculate(targetSpeedHz, filteredFrequencyHz, dtS, feedforward));
   } else {
     outputDuty = 0;
   }
