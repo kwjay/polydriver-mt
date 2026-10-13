@@ -11,6 +11,7 @@ from pathlib import Path
 import pytest
 
 from polydriver.protocol import constants as c
+from polydriver.protocol import link_layer
 
 CORE = Path(__file__).resolve().parents[2] / "firmware" / "polydriver" / "lib" / "core"
 
@@ -140,6 +141,12 @@ def test_reply_payload_lengths():
 	named = cpp_namespace_constants(DEFS, "PayloadLength")
 	for reply in [c.Reply.NACK, c.Reply.STATUS, c.Reply.SETTINGS, c.Reply.VERSION, c.Reply.ID, c.Reply.JOB_INFO]:
 		assert named[reply.name] == c.REPLY_PAYLOAD_LENGTH[reply], reply.name
+
+
+def test_crc8_matches_the_firmware():
+	crc = source("Crc8.h")
+	assert cpp_constant(crc, "INITIAL") == link_layer.CRC8_INITIAL
+	assert number(re.search(r"crc \^= (\w+);", crc).group(1)) == link_layer.CRC8_POLYNOMIAL
 
 
 # --- Values the core classes put on the wire --------------------------------
