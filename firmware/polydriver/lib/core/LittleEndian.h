@@ -23,7 +23,7 @@ inline void putFloat(uint8_t* destination, float value) {
 }
 
 inline uint16_t getU16(const uint8_t* source) {
-  return static_cast<uint16_t>(source[0] | (source[1] << 8));
+  return static_cast<uint16_t>(source[0] | (static_cast<uint16_t>(source[1]) << 8));
 }
 
 inline uint32_t getU32(const uint8_t* source) {

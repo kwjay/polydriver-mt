@@ -38,10 +38,11 @@ bool PIDRegulator::setTunings(float newKp, float newKi, float newKd) {
   return true;
 }
 
+// NaN fails both comparisons and maps to low, so the result is always a number in [low, high].
 float PIDRegulator::clamp(float value, float low, float high) {
   if (value > high) return high;
-  if (value < low) return low;
-  return value;
+  if (value >= low) return value;
+  return low;
 }
 
 bool PIDRegulator::isValidGain(float gain) {

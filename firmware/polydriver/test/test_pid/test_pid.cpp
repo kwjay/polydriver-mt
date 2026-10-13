@@ -1,5 +1,6 @@
 #include <unity.h>
 #include <limits>
+#include <float.h>
 #include "PIDRegulator.h"
 
 void setUp(void) {}
@@ -168,6 +169,18 @@ void test_pid_negative_integral_is_limited() {
   TEST_ASSERT_EQUAL_FLOAT(10.0f, pid.calculate(10.0f, 0.0f, 1.0f, 255.0f));
 }
 
+void test_pid_output_stays_a_number_in_range_even_with_extreme_gains() {
+  PIDRegulator pid(FLT_MAX, 0.0f, FLT_MAX);
+  pid.calculate(0.0f, 0.0f, 0.01f);
+  // P = +inf, D = -inf: their sum is NaN, which must not reach the duty.
+  const float output = pid.calculate(1.0e30f, 1.0e30f * 0.5f, 0.01f);
+  TEST_ASSERT_FALSE(output != output);
+  TEST_ASSERT_TRUE(output >= 0.0f && output <= 255.0f);
+  const float next = pid.calculate(10.0f, 10.0f, 0.01f);
+  TEST_ASSERT_FALSE(next != next);
+  TEST_ASSERT_TRUE(next >= 0.0f && next <= 255.0f);
+}
+
 void test_pid_reset() {
   PIDRegulator pid(0.0f, 1.0f, 1.0f);
   pid.calculate(100.0f, 90.0f, 1.0f);
@@ -207,6 +220,7 @@ int main() {
   RUN_TEST(test_pid_a_large_p_term_does_not_drain_the_integral);
   RUN_TEST(test_pid_a_large_negative_p_term_does_not_fill_the_integral);
   RUN_TEST(test_pid_negative_integral_is_limited);
+  RUN_TEST(test_pid_output_stays_a_number_in_range_even_with_extreme_gains);
   RUN_TEST(test_pid_reset);
   RUN_TEST(test_pid_reset_forgets_the_previous_measurement);
   return UNITY_END();

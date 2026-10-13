@@ -12,9 +12,9 @@ constexpr uint8_t INITIAL = 0x00;
 inline uint8_t update(uint8_t crc, uint8_t byte) {
   for (uint8_t bit = 0; bit < 8; bit++) {
     const bool mix = ((crc ^ byte) & 0x01) != 0;
-    crc >>= 1;
+    crc = static_cast<uint8_t>(crc >> 1);
     if (mix) crc ^= 0x8C;
-    byte >>= 1;
+    byte = static_cast<uint8_t>(byte >> 1);
   }
   return crc;
 }
