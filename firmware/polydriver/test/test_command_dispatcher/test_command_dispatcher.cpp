@@ -319,6 +319,41 @@ void test_dispatcher_loads_commits_and_runs_a_job() {
   TEST_ASSERT_EQUAL_FLOAT(10.0f, board.controller.getTargetSpeedHz());
 }
 
+static uint8_t statusJobState(Board& board) {
+  return replyPayload(board.send(Command::REQ_STAT))[26];
+}
+
+static void assertNewJobReportsReady(Board& board) {
+  loadSpeedJob(board, 20.0f, 300);
+  const uint8_t* p = replyPayload(board.send(Command::REQ_STAT));
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(JobState::READY), p[26]);
+  TEST_ASSERT_EQUAL_HEX8(JobProgram::NO_SEGMENT, p[27]);
+  TEST_ASSERT_EQUAL_UINT32(0, LittleEndian::getU32(&p[28]));
+}
+
+void test_dispatcher_a_new_job_after_done_reports_ready() {
+  Board board;
+  board.configure();
+  loadSpeedJob(board, 50.0f, 100);
+  assertAck(board.send(Command::JOB_RUN, Payload(), 0));
+  board.runner.tick(100 * MS);
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(JobState::DONE), statusJobState(board));
+
+  assertNewJobReportsReady(board);
+}
+
+void test_dispatcher_a_new_job_after_abort_reports_ready() {
+  Board board;
+  board.configure();
+  loadSpeedJob(board, 50.0f, 100);
+  assertAck(board.send(Command::JOB_RUN, Payload(), 0));
+  board.runner.tick(40 * MS);
+  assertAck(board.send(Command::STOP));
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(JobState::ABORTED), statusJobState(board));
+
+  assertNewJobReportsReady(board);
+}
+
 void test_dispatcher_job_errors_map_to_their_nacks() {
   Board board;
   assertNack(NackReason::BAD_INDEX, board.send(Command::JOB_SEGMENT, Payload().u8(3).u8(0).f32(1.0f).u32(10)));
@@ -505,6 +540,8 @@ int main(void) {
   RUN_TEST(test_dispatcher_stop_during_a_job_aborts_it_for_good);
   RUN_TEST(test_dispatcher_estop_latches_and_clears);
   RUN_TEST(test_dispatcher_loads_commits_and_runs_a_job);
+  RUN_TEST(test_dispatcher_a_new_job_after_done_reports_ready);
+  RUN_TEST(test_dispatcher_a_new_job_after_abort_reports_ready);
   RUN_TEST(test_dispatcher_job_errors_map_to_their_nacks);
   RUN_TEST(test_dispatcher_job_run_checks_mode_and_tunings);
   RUN_TEST(test_dispatcher_refuses_changes_while_a_job_runs);

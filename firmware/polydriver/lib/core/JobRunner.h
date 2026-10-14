@@ -12,6 +12,7 @@ public:
   JobResult start(uint32_t nowUs);
   void tick(uint32_t nowUs);
   void abort();
+  void reset();
 
   bool isRunning() const { return phase == JobState::RUNNING; }
   JobState getState() const;

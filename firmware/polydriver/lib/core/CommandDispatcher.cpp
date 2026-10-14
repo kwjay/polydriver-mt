@@ -120,6 +120,7 @@ void CommandDispatcher::execute(const Frame& frame, uint32_t nowUs, const BoardI
       ReplyBuilder::ack(seq, reply);
       return;
     case Command::JOB_CLEAR:
+      runner.reset();
       program.clear();
       ReplyBuilder::ack(seq, reply);
       return;

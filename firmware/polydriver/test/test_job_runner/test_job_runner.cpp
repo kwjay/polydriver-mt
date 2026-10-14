@@ -403,9 +403,55 @@ void test_job_runner_clearing_the_program_drops_the_old_outcome() {
   runner.tick(100 * MS);
   assertState(JobState::DONE, runner);
 
+  runner.reset();
   program.clear();
   assertState(JobState::EMPTY, runner);
   TEST_ASSERT_EQUAL_UINT32(0, runner.getElapsedMs());
+
+  loadSpeedStep(program, 20.0f, 300);
+  assertState(JobState::READY, runner);
+  TEST_ASSERT_EQUAL_UINT32(0, runner.getElapsedMs());
+  TEST_ASSERT_EQUAL_UINT8(JobProgram::NO_SEGMENT, runner.getSegmentIndex());
+
+  assertResult(JobResult::OK, runner.start(500 * MS));
+  runner.tick(510 * MS);
+  TEST_ASSERT_EQUAL_FLOAT(20.0f, controller.getTargetSpeedHz());
+  TEST_ASSERT_EQUAL_UINT32(10, runner.getElapsedMs());
+}
+
+void test_job_runner_reset_after_abort_reports_the_next_job_ready() {
+  JobProgram program;
+  DispenserController controller;
+  configure(controller);
+  loadSpeedStep(program, 50.0f, 100);
+  JobRunner runner(program, controller);
+  runner.start(0);
+  runner.tick(40 * MS);
+  runner.abort();
+  assertState(JobState::ABORTED, runner);
+
+  runner.reset();
+  program.clear();
+  loadSpeedStep(program, 20.0f, 300);
+  assertState(JobState::READY, runner);
+  TEST_ASSERT_EQUAL_UINT32(0, runner.getElapsedMs());
+}
+
+void test_job_runner_reset_while_running_does_nothing() {
+  JobProgram program;
+  DispenserController controller;
+  configure(controller);
+  loadSpeedStep(program, 50.0f, 100);
+  JobRunner runner(program, controller);
+  runner.start(0);
+  runner.tick(40 * MS);
+
+  runner.reset();
+  assertState(JobState::RUNNING, runner);
+  TEST_ASSERT_EQUAL_UINT32(40, runner.getElapsedMs());
+  runner.tick(100 * MS);
+  assertState(JobState::DONE, runner);
+  TEST_ASSERT_EQUAL_FLOAT(0.0f, controller.getTargetSpeedHz());
 }
 
 int main(void) {
@@ -435,5 +481,7 @@ int main(void) {
   RUN_TEST(test_job_runner_a_refused_setpoint_aborts_and_stops);
   RUN_TEST(test_job_runner_runs_again_after_done_and_after_abort);
   RUN_TEST(test_job_runner_clearing_the_program_drops_the_old_outcome);
+  RUN_TEST(test_job_runner_reset_after_abort_reports_the_next_job_ready);
+  RUN_TEST(test_job_runner_reset_while_running_does_nothing);
   return UNITY_END();
 }

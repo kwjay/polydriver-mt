@@ -53,6 +53,17 @@ void JobRunner::abort() {
   if (isRunning()) finish(JobState::ABORTED);
 }
 
+// Forgets the last outcome, so a newly committed program reports READY and not the old DONE or
+// ABORTED. Does nothing while running: the controller would keep the last setpoint with nobody
+// ticking it.
+void JobRunner::reset() {
+  if (isRunning()) return;
+  phase = JobState::EMPTY;
+  elapsedMs = 0;
+  elapsedRemainderUs = 0;
+  segmentIndex = JobProgram::NO_SEGMENT;
+}
+
 JobState JobRunner::getState() const {
   return hasOutcome() ? phase : program.getState();
 }
