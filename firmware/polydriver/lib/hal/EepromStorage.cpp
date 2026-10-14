@@ -17,7 +17,8 @@ uint8_t EepromStorage::loadRole() {
 }
 
 void EepromStorage::saveRole(uint8_t role) {
-  // eeprom_update_byte only writes when the value differs. Each write blocks for about 3.4 ms.
+  // eeprom_update_byte only writes when the value differs. A write runs in the background for
+  // about 3.4 ms and the next EEPROM access waits for it, so this blocks for about 3.4 ms.
   // Role first, check byte second: a power cut in between leaves a mismatch, which reads as
   // INVALID (no role) rather than as a wrong role.
   eeprom_update_byte(eepromAddress(ROLE_ADDRESS), role);

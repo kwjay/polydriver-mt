@@ -93,7 +93,8 @@ uint8_t DispenserController::update(float rawFrequencyHz, uint32_t nowUs, float 
     outputDuty = dutySetpoint;
   } else if (targetSpeedHz > 0.0f) {
     const float feedforward = feedforwardOffsetDuty + feedforwardGainDutyPerHz * targetSpeedHz;
-    outputDuty = static_cast<uint8_t>(pid.calculate(targetSpeedHz, filteredFrequencyHz, dtS, feedforward));
+    // calculate() returns 0-255, so rounding with + 0.5 stays below 256.
+    outputDuty = static_cast<uint8_t>(pid.calculate(targetSpeedHz, filteredFrequencyHz, dtS, feedforward) + 0.5f);
   } else {
     outputDuty = 0;
   }

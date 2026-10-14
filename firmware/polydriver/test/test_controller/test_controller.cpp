@@ -193,6 +193,22 @@ void test_controller_feedforward_adds_to_the_closed_loop_output() {
   TEST_ASSERT_EQUAL_UINT8(125, controller.update(50.0f, 0, DT_S));
 }
 
+static uint8_t dutyWithFeedforwardOnly(float offsetDuty) {
+  DispenserController controller;
+  controller.setTunings(0.0f, 0.0f, 0.0f);
+  controller.setFeedforward(offsetDuty, 0.0f);
+  controller.setTargetSpeedHz(50.0f);
+  return controller.update(50.0f, 0, DT_S);
+}
+
+void test_controller_closed_loop_duty_rounds_to_the_nearest_step() {
+  TEST_ASSERT_EQUAL_UINT8(101, dutyWithFeedforwardOnly(100.6f));
+  TEST_ASSERT_EQUAL_UINT8(100, dutyWithFeedforwardOnly(100.4f));
+  TEST_ASSERT_EQUAL_UINT8(1, dutyWithFeedforwardOnly(0.5f));
+  TEST_ASSERT_EQUAL_UINT8(0, dutyWithFeedforwardOnly(0.4f));
+  TEST_ASSERT_EQUAL_UINT8(255, dutyWithFeedforwardOnly(255.0f));
+}
+
 void test_controller_pid_can_correct_below_the_feedforward() {
   DispenserController controller;
   configure(controller);
@@ -474,6 +490,7 @@ int main(void) {
   RUN_TEST(test_controller_sets_the_feedforward);
   RUN_TEST(test_controller_rejects_an_invalid_feedforward);
   RUN_TEST(test_controller_feedforward_adds_to_the_closed_loop_output);
+  RUN_TEST(test_controller_closed_loop_duty_rounds_to_the_nearest_step);
   RUN_TEST(test_controller_pid_can_correct_below_the_feedforward);
   RUN_TEST(test_controller_feedforward_is_not_applied_at_zero_target);
   RUN_TEST(test_controller_feedforward_is_not_applied_in_open_loop);
