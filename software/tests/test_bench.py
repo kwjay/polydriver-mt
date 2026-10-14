@@ -270,3 +270,13 @@ def test_stats(run):
 	text, _ = connected(run)("stats")
 	assert "frames sent" in text
 	assert "board: dropped frames 0, bad CRC 0" in text
+
+
+@pytest.mark.parametrize("line, expected", [
+	(r"10 2 C:\data\run.csv", ["10", "2", r"C:\data\run.csv"]),
+	(r'10 2 "C:\my data\run 1.csv"', ["10", "2", r"C:\my data\run 1.csv"]),
+	("COM5", ["COM5"]),
+	("", []),
+])
+def test_arguments_keep_windows_backslashes_and_quoted_spaces(line, expected):
+	assert bench_module.split_args(line) == expected

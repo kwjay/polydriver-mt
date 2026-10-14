@@ -42,6 +42,14 @@ NACK_HINTS = {
 STATUS_COLUMNS = ["host_time_s", "device_time_us_unwrapped", *STATUS_FIELDS]
 
 
+def split_args(arg: str) -> list[str]:
+	"""Splits like a shell but keeps backslashes, so Windows paths survive; quotes group words."""
+	lexer = shlex.shlex(arg, posix=True)
+	lexer.whitespace_split = True
+	lexer.escape = ""
+	return list(lexer)
+
+
 def flag_names(flags: StatusFlag) -> str:
 	names = [flag.name for flag in StatusFlag if flag in flags]
 	return ",".join(names) if names else "-"
@@ -162,7 +170,7 @@ class Bench(cmd.Cmd):
 	@command(needs_board=False)
 	def do_connect(self, arg: str) -> None:
 		"""connect PORT  - open the port (resets an Uno), wait for the firmware, check the protocol"""
-		port = shlex.split(arg)[0]
+		port = split_args(arg)[0]
 		if self.board is not None:
 			self.drop_connection(stop_motor=True)
 		self.say(f"opening {port} (the board resets, give it ~2 s) ...")
@@ -267,7 +275,7 @@ class Bench(cmd.Cmd):
 	@command()
 	def do_watch(self, arg: str) -> None:
 		"""watch [HZ] [SECONDS] [FILE.csv]  - print STATUS at HZ (default 10) until Enter, or for SECONDS"""
-		args = shlex.split(arg)
+		args = split_args(arg)
 		hz = float(args[0]) if args else WATCH_HZ
 		duration_s = float(args[1]) if len(args) > 1 and float(args[1]) > 0 else None
 		path = Path(args[2]) if len(args) > 2 else None
@@ -301,7 +309,7 @@ class Bench(cmd.Cmd):
 	@command()
 	def do_pid(self, arg: str) -> None:
 		"""pid KP KI KD  - set the gains (clears UNCONFIGURED)"""
-		kp, ki, kd = (float(x) for x in shlex.split(arg))
+		kp, ki, kd = (float(x) for x in split_args(arg))
 		self.board.set_pid(kp, ki, kd)
 		self.say(f"  pid {kp:g} {ki:g} {kd:g}")
 
@@ -315,7 +323,7 @@ class Bench(cmd.Cmd):
 	@command()
 	def do_ff(self, arg: str) -> None:
 		"""ff OFFSET GAIN  - feedforward: duty = OFFSET + GAIN * target + PID (closed loop, target > 0)"""
-		offset, gain = (float(x) for x in shlex.split(arg))
+		offset, gain = (float(x) for x in split_args(arg))
 		self.board.set_feedforward(offset, gain)
 		self.say(f"  feedforward {offset:g} duty + {gain:g} duty/Hz")
 
@@ -384,7 +392,7 @@ class Bench(cmd.Cmd):
 	@command()
 	def do_sweep(self, arg: str) -> None:
 		"""sweep FROM TO STEP HOLD_S [FILE.csv]  - open-loop duty steps; mean speed over the 2nd half of each hold"""
-		args = shlex.split(arg)
+		args = split_args(arg)
 		start, stop, step = int(args[0]), int(args[1]), int(args[2])
 		hold_s = float(args[3])
 		path = Path(args[4]) if len(args) > 4 else None
@@ -435,7 +443,7 @@ class Bench(cmd.Cmd):
 	@command()
 	def do_job(self, arg: str) -> None:
 		"""job new | add [duty] VALUE SECONDS [ramp] | show | upload | run  - a job run by the board"""
-		args = shlex.split(arg)
+		args = split_args(arg)
 		action = args[0]
 		if action == "new":
 			self.job = []
