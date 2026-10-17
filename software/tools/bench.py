@@ -283,10 +283,10 @@ class Bench(cmd.Cmd):
 			raise ValueError("HZ must be > 0")
 		self.say("watching, Enter to end" + (f", saving to {path}" if path else ""))
 		with _csv_writer(path, STATUS_COLUMNS) as writer:
-			started_s = time.monotonic()
+			started_s = time.perf_counter()
 			next_s = started_s
 			while True:
-				now_s = time.monotonic()
+				now_s = time.perf_counter()
 				if (duration_s is not None and now_s - started_s >= duration_s) or self._keys.pressed():
 					break
 				status = self.board.status()
@@ -295,7 +295,7 @@ class Bench(cmd.Cmd):
 				if writer:
 					writer.writerow(status_row(status, now_s - started_s))
 				next_s += 1.0 / hz
-				time.sleep(max(0.0, next_s - time.monotonic()))
+				time.sleep(max(0.0, next_s - time.perf_counter()))
 
 	# --- Settings --------------------------------------------------------------------
 
@@ -426,16 +426,16 @@ class Bench(cmd.Cmd):
 
 	def _hold(self, hold_s: float) -> list[BoardStatus] | None:
 		samples = []
-		started_s = time.monotonic()
+		started_s = time.perf_counter()
 		next_s = started_s
-		while time.monotonic() - started_s < hold_s:
+		while time.perf_counter() - started_s < hold_s:
 			if self._keys.pressed():
 				return None
 			status = self.board.status()
 			self.note(status)
 			samples.append(status)
 			next_s += 1.0 / SWEEP_SAMPLE_HZ
-			time.sleep(max(0.0, next_s - time.monotonic()))
+			time.sleep(max(0.0, next_s - time.perf_counter()))
 		return samples
 
 	# --- Jobs -----------------------------------------------------------------------
