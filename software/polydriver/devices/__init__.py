@@ -1,4 +1,4 @@
-from .board import Board, BoardStatus, DeviceClock, JobUploadError, Segment
+from .board import Board, BoardStatus, DeviceClock, JobUploadError, Segment, SettingsMismatchError
 from .link import BoardNotRespondingError, DeviceError, Link, LinkCounters, ProtocolVersionError
 
 __all__ = [
@@ -12,4 +12,5 @@ __all__ = [
 	"LinkCounters",
 	"ProtocolVersionError",
 	"Segment",
+	"SettingsMismatchError",
 ]

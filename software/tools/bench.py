@@ -21,6 +21,7 @@ from functools import wraps
 from pathlib import Path
 from typing import TextIO
 
+from polydriver.config import DEFAULT_CONFIG_PATH, ROLES, ConfigError, load_config, write_default_config
 from polydriver.devices import Board, BoardStatus, DeviceError, Link, Segment
 from polydriver.protocol.constants import STATUS_FIELDS, Mode, NackReason, Role, StatusFlag
 from polydriver.protocol.serial_worker import LinkError, LinkOpenError
@@ -115,7 +116,9 @@ def command(needs_board: bool = True):
 			except LinkError as error:
 				self.say(f"link lost: {error}")
 				self.drop_connection()
-			except (DeviceError, RequestError) as error:
+			except ConfigError as error:
+				self.say(f"config not applied: {error}")
+			except (DeviceError, RequestError, OSError) as error:
 				self.say(f"error: {error}")
 			except (ValueError, IndexError, KeyError) as error:
 				self.say(f"usage: {method.__doc__.strip().splitlines()[0]}  ({error})")
@@ -345,6 +348,38 @@ class Bench(cmd.Cmd):
 		if text:
 			self.board.set_role(Role[text.upper()])
 		self.say(f"  role {self.board.role().name}")
+
+	@command(needs_board=False)
+	def do_config(self, arg: str) -> None:
+		"""config [polymer|colour] [FILE] | config new [FILE]  - apply a board's section of polydriver.toml"""
+		args = split_args(arg)
+		if args and args[0] == "new":
+			path = Path(args[1]) if len(args) > 1 else DEFAULT_CONFIG_PATH
+			write_default_config(path)
+			self.say(f"  wrote {path} with every setting and its default; edit it, then `config`")
+			return
+		if self.board is None:
+			self.say("not connected: `connect PORT` first")
+			return
+		role_name = args.pop(0) if args and args[0] in ROLES else None
+		path = Path(args[0]) if args else DEFAULT_CONFIG_PATH
+		if not path.exists():
+			self.say(f"  {path} not found (`config new` writes one)")
+			return
+		config = load_config(path)
+		if role_name is None:
+			stored = self.board.role()
+			role_name = next((name for name, role in ROLES.items() if role is stored), None)
+			if role_name is None:
+				self.say("  the board has no role: `config polymer` or `config colour`, or store one with `id`")
+				return
+		settings = config.boards[ROLES[role_name]]
+		self.board.apply_settings(settings, config.comms_timeout_ms)
+		timeout = "off" if config.comms_timeout_ms == 0 else f"{config.comms_timeout_s:g} s"
+		gains = (f"pid {settings.kp:g} {settings.ki:g} {settings.kd:g}" if settings.has_gains
+				else "no gains in the file (the board stays UNCONFIGURED)")
+		self.say(f"  applied [board.{role_name}] from {path}: timeout {timeout}, {gains}, alpha {settings.alpha:g}, "
+				f"ff {settings.ff_offset_duty:g} + {settings.ff_gain_duty_per_hz:g}/Hz; read back OK")
 
 	# --- Motor ---------------------------------------------------------------------
 

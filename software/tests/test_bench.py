@@ -11,7 +11,8 @@ from polydriver.devices import BoardNotRespondingError, LinkCounters
 from polydriver.protocol.constants import Command, JobState, Mode, NackReason, Role, StatusFlag
 from polydriver.requests import (
 	GetId, JobClear, JobCommit, JobInfo, JobRun, JobSegment, RequestNackError, RequestSettings, RequestStatus,
-	SetCommsTimeout, SetId, SetMode, SetPid, SetPwm, SetSpeed, SettingsReport, StatusReport, Stop, VersionReport,
+	SetCommsTimeout, SetFeedforward, SetFilter, SetId, SetMode, SetPid, SetPwm, SetSpeed, SettingsReport, StatusReport,
+	Stop, VersionReport,
 )
 
 BENCH_PATH = Path(__file__).resolve().parents[1] / "tools" / "bench.py"
@@ -35,6 +36,9 @@ class SimLink:
 		self.device_time_us = 0
 		self.restart_next_status = False
 		self.closed = False
+		self.gains = (0.0, 0.0, 0.0)
+		self.alpha = 1.0
+		self.feedforward = (0.0, 0.0)
 
 	def speed_hz(self) -> float:
 		if self.mode is Mode.OPEN_LOOP:
@@ -56,8 +60,13 @@ class SimLink:
 				if target > 0 and not self.configured:
 					raise RequestNackError(Command.SET_SPEED, NackReason.NOT_CONFIGURED)
 				self.target_hz = target
-			case SetPid():
+			case SetPid(kp=kp, ki=ki, kd=kd):
 				self.configured = True
+				self.gains = (kp, ki, kd)
+			case SetFilter(alpha=alpha):
+				self.alpha = alpha
+			case SetFeedforward(offset_duty=offset, gain_duty_per_hz=gain):
+				self.feedforward = (offset, gain)
 			case SetCommsTimeout(timeout_ms=timeout_ms):
 				self.timeout_ms = timeout_ms
 			case SetId(role=role):
@@ -69,7 +78,8 @@ class SimLink:
 			case JobCommit(segment_count=count, total_ms=total):
 				return JobInfo(JobState.READY, count, total)
 			case RequestSettings():
-				return SettingsReport(1.0, 0.0, 0.0, self.target_hz, self.timeout_ms, self.mode, self.duty, 1.0, 0.0, 0.0)
+				return SettingsReport(*self.gains, self.target_hz, self.timeout_ms, self.mode, self.duty, self.alpha,
+									*self.feedforward)
 			case RequestStatus():
 				if self.restart_next_status:
 					self.device_time_us = 1000
@@ -280,3 +290,73 @@ def test_stats(run):
 ])
 def test_arguments_keep_windows_backslashes_and_quoted_spaces(line, expected):
 	assert bench_module.split_args(line) == expected
+
+
+# --- config -------------------------------------------------------------------------
+
+CONFIG = """
+[safety]
+comms_timeout_s = 1.5
+
+[board.polymer]
+kp = 0.5
+ki = 1.0
+kd = 0.0
+alpha = 0.25
+ff_offset_duty = 128
+ff_gain_duty_per_hz = 1.5
+
+[board.colour]
+alpha = 0.5
+"""
+
+
+def test_config_applies_the_section_of_the_role_given(run, sim, tmp_path):
+	path = tmp_path / "polydriver.toml"
+	path.write_text(CONFIG, encoding="utf-8")
+	text, _ = connected(run)(f"config polymer {path}")
+	assert sim.timeout_ms == 1500
+	assert sim.gains == (0.5, 1.0, 0.0)
+	assert sim.alpha == 0.25
+	assert sim.feedforward == (128.0, 1.5)
+	assert "read back OK" in text
+
+
+def test_config_uses_the_stored_role_when_none_is_given(run, sim, tmp_path):
+	path = tmp_path / "polydriver.toml"
+	path.write_text(CONFIG, encoding="utf-8")
+	sim.role = Role.COLOUR
+	text, _ = connected(run)(f"config {path}")
+	assert sim.alpha == 0.5
+	assert not any(isinstance(r, SetPid) for r in sim.sent)
+	assert "UNCONFIGURED" in text
+
+
+def test_config_needs_a_role_on_an_unnamed_board(run, sim, tmp_path):
+	path = tmp_path / "polydriver.toml"
+	path.write_text(CONFIG, encoding="utf-8")
+	text, _ = connected(run)(f"config {path}")
+	assert "has no role" in text
+
+
+def test_config_reports_a_broken_file_and_sends_nothing(run, sim, tmp_path):
+	path = tmp_path / "polydriver.toml"
+	path.write_text("[board.polymer]\nalpha = 3\n", encoding="utf-8")
+	connected(run)("status")
+	sent_before = len(sim.sent)
+	text, _ = run(f"config polymer {path}")
+	assert "config not applied" in text and "alpha = 3" in text
+	assert len(sim.sent) == sent_before
+
+
+def test_config_new_writes_the_template_once(run, tmp_path):
+	path = tmp_path / "polydriver.toml"
+	text, _ = run(f"config new {path}")
+	assert path.exists() and "wrote" in text
+	text, _ = run(f"config new {path}")
+	assert "already exists" in text
+
+
+def test_config_without_a_file_says_how_to_make_one(run, tmp_path):
+	text, _ = connected(run)(f"config polymer {tmp_path / 'none.toml'}")
+	assert "config new" in text
