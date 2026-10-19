@@ -4,6 +4,7 @@ step (C6.1). If any step of opening fails, everything already started is stopped
 
 import time
 from collections.abc import Callable
+from concurrent.futures import Future
 from dataclasses import dataclass, field
 from typing import TypeVar
 
@@ -113,8 +114,11 @@ class Link:
 	def call(self, request: Request[Result], timeout_s: float | None = None) -> Result:
 		return self._requests.call(request, timeout_s)
 
-	def submit(self, request: Request[Result]):
+	def submit(self, request: Request[Result]) -> "Future[Result]":
 		return self._requests.submit(request)
+
+	def submit_timed(self, request: Request) -> "Future[Exchange]":
+		return self._requests.submit_timed(request)
 
 	def close(self) -> None:
 		self._requests.stop()

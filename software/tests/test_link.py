@@ -134,3 +134,11 @@ def test_the_observer_sees_every_exchange():
 		link.call(Stop())
 	assert [e.request.COMMAND for e in exchanges][-1] == Command.STOP
 	assert all(e.round_trip_s is not None for e in exchanges)
+
+
+def test_submit_timed_gives_the_exchange():
+	with Link.open("COM5", opener=lambda name: BoardPort(), **FAST) as link:
+		exchange = link.submit_timed(Stop()).result(1.0)
+	assert exchange.request == Stop()
+	assert exchange.error is None
+	assert exchange.first_sent_s <= exchange.replied_s

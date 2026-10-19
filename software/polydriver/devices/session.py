@@ -10,7 +10,8 @@ import logging
 import os
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import AbstractContextManager, ExitStack, contextmanager
 from dataclasses import dataclass, replace
 from enum import StrEnum
 from typing import Protocol, TypeVar
@@ -148,6 +149,10 @@ class SessionLike(Protocol):
 
 	def remove_sink(self, sink: TelemetrySink) -> None: ...
 
+	def poll_now(self, role: Role) -> BoardStatus: ...
+
+	def paused_polling(self) -> AbstractContextManager[None]: ...
+
 	def reload_config(self, config: Config) -> None: ...
 
 	def stop_all(self) -> dict[Role, Exception]: ...
@@ -163,6 +168,8 @@ class _Entry:
 		self.state = BoardState(role, link.port, True, link.version, settings)
 		self.stop = threading.Event()
 		self.apply_lock = threading.Lock()
+		# Held for a whole poll, so paused_polling() knows no STATUS is in flight.
+		self.poll_lock = threading.RLock()
 		self.thread: threading.Thread | None = None
 		self.failing_polls = 0
 		self.needs_settings = False
@@ -293,11 +300,7 @@ class Session:
 			return [role for role, entry in sorted(self._entries.items()) if entry.state.connected]
 
 	def board(self, role: Role) -> Board:
-		with self._lock:
-			entry = self._entries.get(role)
-			if entry is None or not entry.state.connected:
-				raise NotConnectedError(f"the {_name(role)} board is not connected")
-			return entry.board
+		return self._connected_entry(role).board
 
 	def state(self, role: Role) -> BoardState:
 		with self._lock:
@@ -305,6 +308,28 @@ class Session:
 			if entry is None:
 				raise NotConnectedError(f"the {_name(role)} board is not connected")
 			return entry.state
+
+	def poll_now(self, role: Role) -> BoardStatus:
+		"""One poll now, through the same path as the poll thread (sinks, restart handling); raises
+		what made it fail."""
+		entry = self._connected_entry(role)
+		with entry.poll_lock:
+			error = self._poll_once(entry)
+			status = entry.state.last_status
+		if error is not None:
+			raise error
+		return status
+
+	@contextmanager
+	def paused_polling(self) -> Iterator[None]:
+		"""Waits for the polls in flight to finish and sends none until the block ends, so a command
+		whose timing matters does not wait behind a STATUS on either board."""
+		with self._lock:
+			entries = [entry for _, entry in sorted(self._entries.items()) if entry.state.connected]
+		with ExitStack() as stack:
+			for entry in entries:
+				stack.enter_context(entry.poll_lock)
+			yield
 
 	def reload_config(self, config: Config) -> None:
 		with self._lock:
@@ -359,7 +384,11 @@ class Session:
 	def _poll(self, entry: _Entry) -> None:
 		next_s = self._clock()
 		while not entry.stop.is_set():
-			if not self._poll_once(entry):
+			with entry.poll_lock:
+				if entry.stop.is_set():
+					return
+				self._poll_once(entry)
+			if not entry.state.connected:
 				return
 			with self._lock:
 				period_s = 1.0 / self._config.logging.poll_hz
@@ -369,20 +398,21 @@ class Session:
 				next_s = now_s
 			entry.stop.wait(next_s - now_s)
 
-	def _poll_once(self, entry: _Entry) -> bool:
-		"""False once the link is lost."""
+	def _poll_once(self, entry: _Entry) -> Exception | None:
+		"""Called holding entry.poll_lock. Returns what made the poll fail; a lost link also marks the
+		board not connected."""
 		role = entry.role
 		try:
 			status = entry.board.status()
 		except LOST_ERRORS as error:
 			self._lose(entry, error)
-			return False
+			return error
 		except Exception as error:
 			self._update(entry, poll_failures=entry.state.poll_failures + 1, last_error=str(error))
 			entry.failing_polls += 1
 			if entry.failing_polls == 1:
 				self._emit(EventKind.POLL_FAILED, role, f"{error}; polling goes on")
-			return True
+			return error
 
 		host_time_s = self._clock()
 		self._update(entry, last_status=status, last_status_host_s=host_time_s, polls=entry.state.polls + 1,
@@ -403,13 +433,13 @@ class Session:
 				self._apply(entry)
 			except LOST_ERRORS as error:
 				self._lose(entry, error)
-				return False
+				return error
 			except Exception as error:
 				self._update(entry, last_error=str(error))
 				if not entry.settings_failing:
 					entry.settings_failing = True
 					self._emit(EventKind.SETTINGS_FAILED, role, f"{error}; trying again at the next poll")
-		return True
+		return None
 
 	def _apply(self, entry: _Entry) -> None:
 		with entry.apply_lock:
@@ -432,6 +462,13 @@ class Session:
 	def _update(self, entry: _Entry, **changes) -> None:
 		with self._lock:
 			entry.state = replace(entry.state, **changes)
+
+	def _connected_entry(self, role: Role) -> _Entry:
+		with self._lock:
+			entry = self._entries.get(role)
+			if entry is None or not entry.state.connected:
+				raise NotConnectedError(f"the {_name(role)} board is not connected")
+			return entry
 
 	def _release(self, role: Role) -> None:
 		with self._lock:

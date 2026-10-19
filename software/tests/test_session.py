@@ -1,154 +1,21 @@
-import threading
 import time
 
 import pytest
 
-from polydriver.config import BoardSettings, Config, LoggingSettings
+from polydriver.config import BoardSettings
 from polydriver.devices import BoardNotRespondingError, SettingsMismatchError
-from polydriver.devices.board import BoardStatus, _f32
+from polydriver.devices.board import _f32
 from polydriver.devices.session import (
 	AlreadyConnectedError, EventKind, NoPortError, NotConnectedError, PortInUseError, RoleMismatchError, Session,
 )
-from polydriver.protocol.constants import Command, JobState, Mode, NackReason, Role, StatusFlag
+from polydriver.protocol.constants import Role
 from polydriver.protocol.serial_worker import LinkLostError
 from polydriver.requests import (
-	GetId, RequestNackError, RequestSettings, RequestStatus, SetCommsTimeout, SetFeedforward, SetFilter, SetId,
-	SetPid, SetSpeed, SettingsReport, StatusReport, Stop, VersionReport,
+	GetId, RequestSettings, RequestStatus, SetCommsTimeout, SetFeedforward, SetFilter, SetPid, SetSpeed, Stop,
 )
 from polydriver.requests.request_queue import RequestTimeoutError
 
-POLYMER_SETTINGS = BoardSettings(kp=0.5, ki=1.0, kd=0.0, alpha=0.4, ff_offset_duty=128.0, ff_gain_duty_per_hz=1.5)
-COLOUR_SETTINGS = BoardSettings(alpha=0.5)
-
-
-def make_config(poll_hz: float = 50.0, **changes) -> Config:
-	values = dict(
-		ports={Role.POLYMER: "COM6", Role.COLOUR: "COM5"},
-		comms_timeout_s=2.0,
-		boards={Role.POLYMER: POLYMER_SETTINGS, Role.COLOUR: COLOUR_SETTINGS},
-		logging=LoggingSettings(poll_hz=poll_hz),
-	)
-	values.update(changes)
-	return Config(**values)
-
-
-class FakeLink:
-	"""A board behind a link, answering the requests the Session sends like the firmware does."""
-
-	def __init__(self, port: str, stored_role: Role):
-		self.port = port
-		self.version = VersionReport(3, 3, 0, 0, 32)
-		self.stored_role = stored_role
-		self.sent = []
-		self.closed = False
-		self.lock = threading.Lock()
-		self.device_time_us = 1_000_000
-		self.configured = False
-		self.gains = (0.0, 0.0, 0.0)
-		self.alpha = 1.0
-		self.feedforward = (0.0, 0.0)
-		self.timeout_ms = 0
-		self.fail_with: Exception | None = None
-		self.status_timeouts = 0
-		self.ignore_filter = False
-		self.status_delay_s = 0.0
-
-	def call(self, request, timeout_s=None):
-		with self.lock:
-			if self.closed:
-				raise LinkLostError(f"{self.port} is closed")
-			self.sent.append(request)
-			if self.fail_with is not None:
-				raise self.fail_with
-			match request:
-				case GetId():
-					return self.stored_role
-				case SetId(role=role):
-					self.stored_role = Role(role)
-				case SetCommsTimeout(timeout_ms=timeout_ms):
-					self.timeout_ms = timeout_ms
-				case SetPid(kp=kp, ki=ki, kd=kd):
-					self.gains, self.configured = (_f32(kp), _f32(ki), _f32(kd)), True
-				case SetFilter(alpha=alpha) if not self.ignore_filter:
-					self.alpha = _f32(alpha)
-				case SetFeedforward(offset_duty=offset, gain_duty_per_hz=gain):
-					self.feedforward = (_f32(offset), _f32(gain))
-				case SetSpeed(target_speed_hz=target) if target > 0 and not self.configured:
-					raise RequestNackError(Command.SET_SPEED, NackReason.NOT_CONFIGURED)
-				case RequestSettings():
-					return SettingsReport(*self.gains, 0.0, self.timeout_ms, Mode.CLOSED_LOOP, 0, self.alpha, *self.feedforward)
-				case RequestStatus():
-					if self.status_delay_s:
-						time.sleep(self.status_delay_s)
-						self.status_delay_s = 0.0
-					if self.status_timeouts > 0:
-						self.status_timeouts -= 1
-						raise RequestTimeoutError("REQ_STAT got no reply after 4 attempts")
-					self.device_time_us += 20_000
-					flags = StatusFlag(0) if self.configured else StatusFlag.UNCONFIGURED
-					return StatusReport(12.0, 12.0, 100, flags, self.device_time_us, 0, 0, 10004, 0, 0, JobState.EMPTY,
-										None, 0)
-			return None
-
-	def restart(self) -> None:
-		with self.lock:
-			self.device_time_us = 5_000
-			self.configured = False
-			self.gains, self.alpha, self.feedforward, self.timeout_ms = (0.0, 0.0, 0.0), 1.0, (0.0, 0.0), 0
-
-	def count(self, request_type) -> int:
-		with self.lock:
-			return sum(1 for r in self.sent if isinstance(r, request_type))
-
-	def close(self) -> None:
-		self.closed = True
-
-
-class Recorder:
-	def __init__(self):
-		self.statuses: list[tuple[Role, BoardStatus, float]] = []
-		self.events = []
-		self.lock = threading.Lock()
-
-	def record_status(self, role, status, host_time_s):
-		with self.lock:
-			self.statuses.append((role, status, host_time_s))
-
-	def record_event(self, event):
-		with self.lock:
-			self.events.append(event)
-
-	def kinds(self, role=None):
-		with self.lock:
-			return [e.kind for e in self.events if role is None or e.role is role]
-
-	def status_count(self, role):
-		with self.lock:
-			return sum(1 for r, _, _ in self.statuses if r is role)
-
-
-class Boards:
-	"""Link factory: one FakeLink per port, each storing the role given here."""
-
-	def __init__(self, roles: dict[str, Role]):
-		self.roles = roles
-		self.links: dict[str, FakeLink] = {}
-		self.opened: list[str] = []
-
-	def __call__(self, port: str) -> FakeLink:
-		self.opened.append(port)
-		link = FakeLink(port, self.roles[port])
-		self.links[port] = link
-		return link
-
-
-def wait_until(predicate, timeout_s: float = 2.0) -> bool:
-	deadline = time.monotonic() + timeout_s
-	while time.monotonic() < deadline:
-		if predicate():
-			return True
-		time.sleep(0.005)
-	return predicate()
+from fakes import COLOUR_SETTINGS, Boards, Recorder, make_config, wait_until
 
 
 @pytest.fixture
@@ -372,6 +239,44 @@ def test_a_removed_sink_hears_nothing_more(session, recorder):
 	count = recorder.status_count(Role.POLYMER)
 	time.sleep(0.1)
 	assert recorder.status_count(Role.POLYMER) == count
+
+
+def test_poll_now_polls_through_the_sinks(session, recorder):
+	session.connect(Role.POLYMER)
+	before = recorder.status_count(Role.POLYMER)
+	status = session.poll_now(Role.POLYMER)
+	assert status.report.raw_speed_hz == 12.0
+	assert recorder.status_count(Role.POLYMER) > before
+
+
+def test_poll_now_raises_what_made_the_poll_fail(session, boards):
+	session.connect(Role.POLYMER)
+	boards.links["COM6"].status_timeouts = 1
+	with pytest.raises(RequestTimeoutError):
+		session.poll_now(Role.POLYMER)
+	session.poll_now(Role.POLYMER)
+
+
+def test_poll_now_reports_a_lost_link(session, boards):
+	session.connect(Role.POLYMER)
+	boards.links["COM6"].fail_with = LinkLostError("COM6 lost")
+	with pytest.raises(LinkLostError):
+		session.poll_now(Role.POLYMER)
+	assert not session.state(Role.POLYMER).connected
+
+
+def test_paused_polling_waits_for_the_poll_in_flight_and_sends_none(session, boards):
+	session.connect(Role.POLYMER)
+	session.connect(Role.COLOUR)
+	polymer, colour = boards.links["COM6"], boards.links["COM5"]
+	polymer.status_delay_s = 0.2
+	assert wait_until(lambda: polymer.status_in_flight)
+	with session.paused_polling():
+		assert not polymer.status_in_flight
+		counts = polymer.count(RequestStatus), colour.count(RequestStatus)
+		time.sleep(0.1)
+		assert (polymer.count(RequestStatus), colour.count(RequestStatus)) == counts
+	assert wait_until(lambda: polymer.count(RequestStatus) > counts[0] and colour.count(RequestStatus) > counts[1])
 
 
 # --- Using and leaving ----------------------------------------------------------------

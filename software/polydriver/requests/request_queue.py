@@ -52,15 +52,18 @@ class Transport(Protocol):
 
 @dataclass(frozen=True)
 class Exchange:
-	"""One finished request, for link-quality logging (chapter 6.2). Times are the transport's
-	clock; sent_s is the last attempt."""
+	"""One finished request, for link-quality logging (chapter 6.2) and for timing a command on the
+	board. Times are the transport's clock. The board runs a command once, on the first attempt that
+	reaches it, so it ran between first_sent_s and replied_s."""
 
 	request: Request
 	sequence: int
 	attempts: int
+	first_sent_s: float | None
 	sent_s: float | None
 	replied_s: float | None
-	error: BaseException | None
+	result: Any = None
+	error: BaseException | None = None
 
 	@property
 	def round_trip_s(self) -> float | None:
@@ -91,6 +94,7 @@ class _Counts:
 class _Item:
 	request: Request
 	future: Future
+	timed: bool = False
 
 
 class _State(Enum):
@@ -186,10 +190,18 @@ class RequestQueue:
 		self._fail_waiting()
 
 	def submit(self, request: Request[Result]) -> "Future[Result]":
+		return self._submit(request, timed=False)
+
+	def submit_timed(self, request: Request) -> "Future[Exchange]":
+		"""Like submit(), but the future gives the whole Exchange: the result or the request's error
+		(NACK, timeout) together with its times. It raises only when the link is lost or stopped."""
+		return self._submit(request, timed=True)
+
+	def _submit(self, request: Request, timed: bool) -> Future:
 		future: Future = Future()
 		with self._lock:
 			self._raise_unless_accepting()
-			item = _Item(request, future)
+			item = _Item(request, future, timed)
 			if request.URGENT:
 				self._pending.insert(self._urgent_count(), item)
 			else:
@@ -246,10 +258,13 @@ class RequestQueue:
 		sequence = self._sequence.next_sequence()
 		frame = build_frame(request.COMMAND, sequence, request.encode())
 		attempts = 0
+		first_sent_s: float | None = None
 		sent_s: float | None = None
 		while True:
 			attempts += 1
 			sent_s = self._transport.send(frame)
+			if first_sent_s is None:
+				first_sent_s = sent_s
 			with self._lock:
 				self._counts.frames_sent += 1
 				if attempts > 1:
@@ -267,14 +282,14 @@ class RequestQueue:
 				error: BaseException = RequestTimeoutError(
 					f"{request.COMMAND.name} got no reply after {attempts} attempts"
 				)
-				self._finish(item, sequence, attempts, sent_s, None, error=error)
+				self._finish(item, sequence, attempts, first_sent_s, sent_s, None, error=error)
 				return
 			try:
 				result = request.handle(received.frame)
 			except RequestError as error:
-				self._finish(item, sequence, attempts, sent_s, received.received_s, error=error)
+				self._finish(item, sequence, attempts, first_sent_s, sent_s, received.received_s, error=error)
 				return
-			self._finish(item, sequence, attempts, sent_s, received.received_s, result=result)
+			self._finish(item, sequence, attempts, first_sent_s, sent_s, received.received_s, result=result)
 			return
 
 	def _await_reply(self, sequence: int) -> ReceivedFrame | None:
@@ -296,13 +311,17 @@ class RequestQueue:
 				continue
 			return received
 
-	def _finish(self, item: _Item, sequence: int, attempts: int, sent_s: float | None,
+	def _finish(self, item: _Item, sequence: int, attempts: int, first_sent_s: float | None, sent_s: float | None,
 				replied_s: float | None, result: Any = None, error: BaseException | None = None) -> None:
-		_settle(item.future, result=result, error=error)
+		exchange = Exchange(item.request, sequence, attempts, first_sent_s, sent_s, replied_s, result, error)
+		if item.timed:
+			_settle(item.future, result=exchange)
+		else:
+			_settle(item.future, result=result, error=error)
 		if self._observer is None:
 			return
 		try:
-			self._observer(Exchange(item.request, sequence, attempts, sent_s, replied_s, error))
+			self._observer(exchange)
 		except Exception:
 			logger.exception("request queue: observer failed")
 

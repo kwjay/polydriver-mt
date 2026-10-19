@@ -415,6 +415,7 @@ def test_every_exchange_is_reported_with_its_timing(transport):
 	assert exchange.request == SetSpeed(5.0)
 	assert exchange.sequence == FIXED_START
 	assert exchange.attempts == 2
+	assert exchange.first_sent_s == 1.0
 	assert exchange.sent_s == 2.0
 	assert exchange.replied_s == 2.25
 	assert exchange.round_trip_s == 0.25
@@ -430,6 +431,42 @@ def test_a_failed_exchange_is_reported_with_its_error(transport):
 	assert isinstance(exchanges[0].error, RequestTimeoutError)
 	assert exchanges[0].replied_s is None
 	assert exchanges[0].round_trip_s is None
+
+
+def test_submit_timed_gives_the_exchange_with_the_result():
+	transport = FakeTransport(lambda f: [ReplyFrame(Reply.VERSION, f.sequence, version_payload())])
+	with make_queue(transport) as requests:
+		exchange = requests.submit_timed(GetVersion()).result(1.0)
+	assert exchange.result.protocol_version == 3
+	assert exchange.error is None
+	assert exchange.first_sent_s == exchange.sent_s == 1.0
+	assert exchange.replied_s == 1.25
+
+
+def test_submit_timed_keeps_the_first_send_of_a_retried_request(transport):
+	answers = iter([lambda f: [], lambda f: [ReplyFrame(Reply.ACK, f.sequence, b"")]])
+	transport.respond = lambda f: next(answers)(f)
+	with make_queue(transport) as requests:
+		exchange = requests.submit_timed(Stop()).result(1.0)
+	assert (exchange.first_sent_s, exchange.sent_s, exchange.attempts) == (1.0, 2.0, 2)
+
+
+def test_submit_timed_reports_a_nack_inside_the_exchange(transport):
+	transport.respond = lambda f: [ReplyFrame(Reply.NACK, f.sequence, bytes([NackReason.WRONG_STATE]))]
+	with make_queue(transport) as requests:
+		exchange = requests.submit_timed(Stop()).result(1.0)
+	assert isinstance(exchange.error, RequestNackError)
+	assert exchange.error.reason is NackReason.WRONG_STATE
+	assert exchange.result is None
+
+
+def test_submit_timed_raises_when_the_link_is_lost(transport):
+	transport.respond = lambda f: []
+	with make_queue(transport) as requests:
+		future = requests.submit_timed(Stop())
+		transport.push(LinkLostError("port gone"))
+		with pytest.raises(LinkLostError):
+			future.result(1.0)
 
 
 def test_an_observer_that_raises_does_not_break_the_queue(transport):
