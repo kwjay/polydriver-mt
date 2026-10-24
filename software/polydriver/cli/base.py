@@ -9,6 +9,7 @@ import cmd
 import logging
 import sys
 import threading
+import time
 from collections.abc import Callable, Iterable
 from pathlib import Path
 from typing import TextIO
@@ -19,6 +20,7 @@ from ..protocol.constants import NackReason, Role
 from ..protocol.serial_worker import LinkError, LinkOpenError
 from ..requests import RequestError, RequestNackError
 from ..requests.request_queue import QueueStateError, RequestTimeoutError
+from .keys import KeyWatcher
 from .parsing import UsageError, role_name
 
 logger = logging.getLogger(__name__)
@@ -89,6 +91,8 @@ class ShellBase(cmd.Cmd):
 		self.config = config
 		self.config_path = config_path
 		self._output_lock = threading.Lock()
+		self.keys = KeyWatcher(stdin)
+		self.clock = time.perf_counter
 		session.add_sink(EventPrinter(self.say))
 
 	def say(self, text: str) -> None:
@@ -110,7 +114,7 @@ class ShellBase(cmd.Cmd):
 		try:
 			return bool(super().onecmd(line))
 		except UsageError as error:
-			self.say(f"usage: {self._usage(name)}  ({error})")
+			self.say(f"usage: {error.usage or self._usage(name)}  ({error})")
 		except Exception as error:
 			message = describe(error)
 			self.say(message if message is not None else self._internal_error(error))

@@ -39,6 +39,20 @@ def _is_number(value: Any) -> bool:
 	return isinstance(value, (int, float)) and not isinstance(value, bool)
 
 
+def comms_timeout_problem(timeout_s: float, poll_hz: float, name: str = "comms_timeout_s") -> str | None:
+	"""0 is off; otherwise the board's range, and long enough that one late poll cannot stop the motor."""
+	if timeout_s == 0:
+		return None
+	if not math.isfinite(timeout_s) or timeout_s > MAX_COMMS_TIMEOUT_S:
+		return f"{name} = {_shown(timeout_s)}: must be at most {MAX_COMMS_TIMEOUT_S} s (the board's limit)"
+	if timeout_s < MIN_COMMS_TIMEOUT_S:
+		return f"{name} = {_shown(timeout_s)}: must be 0 (off) or at least {MIN_COMMS_TIMEOUT_S} s"
+	if timeout_s < POLLS_PER_TIMEOUT / poll_hz:
+		return (f"{name} = {_shown(timeout_s)}: must cover at least {POLLS_PER_TIMEOUT} polls at poll_hz "
+				f"{_shown(poll_hz)} ({POLLS_PER_TIMEOUT / poll_hz:g} s), or one late poll stops the motor")
+	return None
+
+
 def _board_problems(kp, ki, kd, alpha, ff_offset_duty, ff_gain_duty_per_hz) -> list[str]:
 	problems = []
 	gains = {"kp": kp, "ki": ki, "kd": kd}
@@ -201,20 +215,9 @@ def _read(data: dict, base_dir: Path) -> tuple[Config, list[str]]:
 		poll_hz=poll_hz,
 	)
 
-	if timeout_s != 0:
-		if timeout_s > MAX_COMMS_TIMEOUT_S:
-			reader.problems.append(
-				f"[safety] comms_timeout_s = {_shown(timeout_s)}: must be at most {MAX_COMMS_TIMEOUT_S} s (the board's limit)"
-			)
-		elif timeout_s < MIN_COMMS_TIMEOUT_S:
-			reader.problems.append(
-				f"[safety] comms_timeout_s = {_shown(timeout_s)}: must be 0 (off) or at least {MIN_COMMS_TIMEOUT_S} s"
-			)
-		elif timeout_s < POLLS_PER_TIMEOUT / poll_hz:
-			reader.problems.append(
-				f"[safety] comms_timeout_s = {_shown(timeout_s)}: must cover at least {POLLS_PER_TIMEOUT} polls at "
-				f"poll_hz {_shown(poll_hz)} ({POLLS_PER_TIMEOUT / poll_hz:g} s), or one late poll stops the motor"
-			)
+	timeout_problem = comms_timeout_problem(timeout_s, poll_hz)
+	if timeout_problem:
+		reader.problems.append(f"[safety] {timeout_problem}")
 
 	paths_section = reader.section("paths", ("jobs", "calibration", "materials"))
 	paths = PathSettings(

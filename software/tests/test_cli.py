@@ -11,23 +11,8 @@ from polydriver.requests import (
 	ClearEstop, Estop, RequestNackError, RequestStatus, SetId, SetPid, SetSpeed, Stop,
 )
 
+from cli_helpers import CONFIG_TEXT, make_shell, run
 from fakes import Boards, wait_until
-
-CONFIG_TEXT = """
-[ports]
-polymer = "COM6"
-colour = "COM5"
-
-[board.polymer]
-kp = 0.5
-ki = 1.0
-kd = 0.0
-alpha = 0.4
-
-[logging]
-poll_hz = 50
-"""
-
 
 @pytest.fixture
 def boards():
@@ -43,23 +28,9 @@ def config_path(tmp_path):
 
 @pytest.fixture
 def shell(boards, config_path):
-	config = load_config(config_path)
-	session = Session(config, link_factory=boards)
-	shell = Shell(session, config, config_path, stdin=io.StringIO(), stdout=io.StringIO())
+	shell = make_shell(boards, config_path)
 	yield shell
-	session.close()
-
-
-def run(shell: Shell, *lines: str) -> str:
-	"""Runs the lines and returns only what they printed."""
-	out = shell.stdout
-	start = out.tell()
-	for line in lines:
-		shell.onecmd(shell.precmd(line))
-	out.seek(start)
-	text = out.read()
-	out.seek(0, io.SEEK_END)
-	return text
+	shell.session.close()
 
 
 # --- Parsing ------------------------------------------------------------------------

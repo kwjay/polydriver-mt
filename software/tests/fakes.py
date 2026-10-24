@@ -6,12 +6,14 @@ import time
 from concurrent.futures import Future
 
 from polydriver.config import BoardSettings, Config, LoggingSettings
+from polydriver.devices import LinkCounters
 from polydriver.devices.board import BoardStatus, _f32
 from polydriver.protocol.constants import Command, JobState, Mode, NackReason, Role, StatusFlag
 from polydriver.protocol.serial_worker import LinkError, LinkLostError
 from polydriver.requests import (
 	GetId, JobClear, JobCommit, JobInfo, JobRun, JobSegment, RequestNackError, RequestSettings, RequestStatus,
-	SetCommsTimeout, SetFeedforward, SetFilter, SetId, SetMode, SetPid, SetSpeed, SettingsReport, StatusReport, Stop,
+	SetCommsTimeout, SetFeedforward, SetFilter, SetId, SetMode, SetPid, SetPwm, SetSpeed, SettingsReport, StatusReport,
+	Stop,
 	VersionReport,
 )
 from polydriver.requests.request_queue import Exchange, QueueStateError, RequestTimeoutError
@@ -51,6 +53,8 @@ class FakeLink:
 		self.job_state = JobState.EMPTY
 		self.mode = Mode.CLOSED_LOOP
 		self.estop = False
+		self.pwm_duty = 0
+		self.hz_per_duty = 0.2
 		self.segments: list[JobSegment] = []
 		self.fail_with: Exception | None = None
 		self.refuse: dict[type, Exception] = {}
@@ -76,7 +80,11 @@ class FakeLink:
 				case GetId():
 					return self.stored_role
 				case SetMode(mode=mode):
-					self.mode = Mode(mode)
+					self.mode, self.pwm_duty = Mode(mode), 0
+				case SetPwm(duty=duty):
+					if self.mode is not Mode.OPEN_LOOP:
+						raise RequestNackError(Command.SET_PWM, NackReason.WRONG_MODE)
+					self.pwm_duty = duty
 				case SetId(role=role):
 					self.stored_role = Role(role)
 				case SetCommsTimeout(timeout_ms=timeout_ms):
@@ -90,7 +98,7 @@ class FakeLink:
 				case SetSpeed(target_speed_hz=target) if target > 0 and not self.configured:
 					raise RequestNackError(Command.SET_SPEED, NackReason.NOT_CONFIGURED)
 				case RequestSettings():
-					return SettingsReport(*self.gains, 0.0, self.timeout_ms, Mode.CLOSED_LOOP, 0, self.alpha, *self.feedforward)
+					return SettingsReport(*self.gains, 0.0, self.timeout_ms, self.mode, self.pwm_duty, self.alpha, *self.feedforward)
 				case RequestStatus():
 					return self._status()
 				case JobClear():
@@ -117,6 +125,7 @@ class FakeLink:
 						raise RequestNackError(Command.JOB_RUN, NackReason.NOT_CONFIGURED)
 					self.job_state = JobState.RUNNING
 				case Stop():
+					self.pwm_duty = 0
 					if self.job_state is JobState.RUNNING:
 						self.job_state = JobState.ABORTED
 			return None
@@ -136,7 +145,11 @@ class FakeLink:
 				flags |= StatusFlag.OPEN_LOOP
 			if self.estop:
 				flags |= StatusFlag.ESTOP
-			return StatusReport(12.0, 12.0, 100, flags, self.device_time_us, 0, 0, 10004, 0, 0, self.job_state, None, 0)
+			if self.mode is Mode.OPEN_LOOP:
+				speed_hz, duty = self.pwm_duty * self.hz_per_duty, self.pwm_duty
+			else:
+				speed_hz, duty = 12.0, 100
+			return StatusReport(speed_hz, speed_hz, duty, flags, self.device_time_us, 0, 0, 10004, 0, 0, self.job_state, None, 0)
 		finally:
 			self.status_in_flight = False
 
@@ -165,13 +178,19 @@ class FakeLink:
 		threading.Thread(target=answer, daemon=True).start()
 		return future
 
+	@property
+	def stats(self) -> LinkCounters:
+		with self.lock:
+			return LinkCounters(frames_sent=len(self.sent), retries=1, reply_timeouts=1, late_replies=0,
+								nacks={NackReason.WRONG_MODE: 2})
+
 	def restart(self) -> None:
 		with self.lock:
 			self.device_time_us = 5_000
 			self.configured = False
 			self.gains, self.alpha, self.feedforward, self.timeout_ms = (0.0, 0.0, 0.0), 1.0, (0.0, 0.0), 0
 			self.job_state, self.segments = JobState.EMPTY, []
-			self.mode, self.estop = Mode.CLOSED_LOOP, False
+			self.mode, self.estop, self.pwm_duty = Mode.CLOSED_LOOP, False, 0
 
 	def count(self, request_type) -> int:
 		with self.lock:

@@ -1,4 +1,5 @@
-"""Bench tool for one board, until the CLI (C9) exists. From software/:
+"""Bench tool for one board. `python -m polydriver` now does all of this except `job`, which comes
+with C9.4; this file goes then. From software/:
 
 	python tools/bench.py            then: connect COM5
 	python tools/bench.py COM5

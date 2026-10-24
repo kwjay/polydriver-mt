@@ -11,7 +11,11 @@ ROLE_WORDS = {"polymer": Role.POLYMER, "colour": Role.COLOUR, "color": Role.COLO
 
 
 class UsageError(ValueError):
-	pass
+	"""usage, when given, replaces the command's own usage line (a sub-command's is more precise)."""
+
+	def __init__(self, message: str, usage: str | None = None):
+		super().__init__(message)
+		self.usage = usage
 
 
 def split_args(arg: str) -> list[str]:
@@ -58,6 +62,24 @@ def parse_number(token: str, name: str) -> float:
 	if not math.isfinite(value):
 		raise UsageError(f"{name} must be a finite number, not {token!r}")
 	return value
+
+
+def parse_duty(token: str, name: str) -> int:
+	try:
+		duty = int(token)
+	except ValueError:
+		duty = -1
+	if not 0 <= duty <= 255:
+		raise UsageError(f"{name} must be a whole number from 0 to 255, not {token!r}")
+	return duty
+
+
+def looks_like_number(token: str) -> bool:
+	try:
+		float(token)
+	except ValueError:
+		return False
+	return True
 
 
 def role_name(role: Role) -> str:

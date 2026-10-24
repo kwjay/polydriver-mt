@@ -5,7 +5,8 @@ from pathlib import Path
 import pytest
 
 from polydriver.config import (
-	DEFAULT_COMMS_TIMEOUT_S, BoardSettings, Config, ConfigError, default_config_text, load_config, save_config,
+	DEFAULT_COMMS_TIMEOUT_S, BoardSettings, Config, ConfigError, comms_timeout_problem, default_config_text, load_config,
+	save_config,
 	write_default_config,
 )
 from polydriver.protocol.constants import Role
@@ -171,6 +172,18 @@ def test_a_mistake_names_the_file_section_and_key(tmp_path, text, message):
 	with pytest.raises(ConfigError, match=message) as raised:
 		load_config(path)
 	assert str(path) in str(raised.value)
+
+
+@pytest.mark.parametrize("timeout_s, poll_hz, problem", [
+	(0, 10, None), (2.0, 10, None), (0.5, 10, None), (0.2, 10, "at least 0.5"), (70, 10, "65.535"),
+	(0.5, 2, "3 polls"), (math.inf, 10, "65.535"), (math.nan, 10, "65.535"),
+])
+def test_the_comms_timeout_rule_on_its_own(timeout_s, poll_hz, problem):
+	found = comms_timeout_problem(timeout_s, poll_hz, name="timeout")
+	if problem is None:
+		assert found is None
+	else:
+		assert found.startswith("timeout = ") and problem in found
 
 
 def test_broken_toml_says_where(tmp_path):
