@@ -12,6 +12,9 @@ dependencies = [
     "tomli-w==1.2.0",
 ]
 
+[project.scripts]
+polydriver = "polydriver.cli:main"   # the shell; same as python -m polydriver
+
 [project.optional-dependencies]
 dev = [
     "pytest==9.1.1",
