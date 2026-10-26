@@ -36,6 +36,12 @@ class ProgressCurve:
 	def _progress(self, x: float) -> float:
 		raise NotImplementedError
 
+	def __eq__(self, other: object) -> bool:
+		return isinstance(other, ProgressCurve) and self.spec() == other.spec()
+
+	def __hash__(self) -> int:
+		return hash(repr(self))
+
 	def __repr__(self) -> str:
 		params = ", ".join(f"{k}={v!r}" for k, v in self.params().items())
 		return f"{type(self).__name__}({params})"

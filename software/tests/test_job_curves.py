@@ -70,6 +70,13 @@ def test_progress_outside_0_to_1_is_refused(curve, x):
 		curve.progress(x)
 
 
+def test_curves_are_equal_when_their_specs_are():
+	assert SCurve(8.0) == SCurve(8) == make_curve("s-curve", {"k": 8.0})
+	assert SCurve(8.0) != SCurve(9.0) and LinearCurve() != SCurve(8.0) and LinearCurve() != "linear"
+	assert TableCurve([(0, 0), (1, 1)]) == TableCurve([[0.0, 0.0], [1.0, 1.0]]) != LinearCurve()
+	assert len({SCurve(8.0), SCurve(8.0), LinearCurve()}) == 2
+
+
 # --- Each shape ------------------------------------------------------------------------------------
 
 def test_linear():

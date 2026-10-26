@@ -1,0 +1,20 @@
+{
+  "schema": 1,
+  "name": "PP red 1-5 % linear",
+  "created": "2026-10-03T15:00:00+02:00",
+  "modified": "2026-10-03T15:20:00+02:00",
+  "materials": {"polymer": "PP", "colour": "MB-red"},
+  "calibration": {
+    "polymer": {"dispenser": "B", "material": "PP", "hash": "…"},
+    "colour":  {"dispenser": "A", "material": "MB-red", "hash": "…"}
+  },
+  "amount": {"duration_s": 600, "total_mass_g": null, "total_flow_g_s": 1.5},
+  "profile": {
+    "phi_start": 0.01, "phi_end": 0.05,
+    "curve": "linear", "curve_params": {},
+    "hold_start_s": 30, "hold_end_s": 30,
+    "table": null
+  },
+  "pid_override": null,
+  "run_defaults": {"log": true, "live_plot": true}
+}
