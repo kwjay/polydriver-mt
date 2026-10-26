@@ -324,7 +324,10 @@ def test_start_run_log_follows_a_session(tmp_path):
 		time.sleep(0.1)
 	csv_rows = read_rows(log.csv_path)
 	assert len(csv_rows) == rows
-	assert all(r["polymer_raw_hz"] and r["colour_raw_hz"] for r in csv_rows[:-1])
+	# A board that polls twice before the other polls once gets a row of its own (C8.2), which a busy
+	# machine can cause anywhere in the log, so only most rows are pairs.
+	assert all(r["polymer_raw_hz"] or r["colour_raw_hz"] for r in csv_rows)
+	assert sum(bool(r["polymer_raw_hz"] and r["colour_raw_hz"]) for r in csv_rows) >= 0.75 * len(csv_rows)
 	side = read_json(log.sidecar_path)
 	assert log.csv_path.parent == tmp_path / "logs"
 	assert side["boards"]["polymer"]["port"] == "COM6"
