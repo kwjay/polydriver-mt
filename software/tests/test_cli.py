@@ -5,7 +5,7 @@ import pytest
 from polydriver.cli import Shell, UsageError, main, parse_number, parse_role, parse_roles, split_args
 from polydriver.config import default_config_text, load_config
 from polydriver.devices import Session
-from polydriver.protocol.constants import Command, NackReason, Role
+from polydriver.protocol.constants import Command, JobState, NackReason, Role
 from polydriver.protocol.serial_worker import LinkLostError
 from polydriver.requests import (
 	ClearEstop, Estop, RequestNackError, RequestStatus, SetId, SetPid, SetSpeed, Stop,
@@ -359,6 +359,17 @@ def test_a_broken_config_keeps_the_old_one(shell, boards, config_path):
 	text = run(shell, "config reload")
 	assert "kpp" in text and "still using the previous config" in text
 	assert shell.config.boards[Role.POLYMER].kp == 0.5
+
+
+def test_config_reload_waits_for_a_running_job(shell, boards, config_path):
+	run(shell, "connect polymer")
+	boards.links["COM6"].job_state = JobState.RUNNING
+	shell.session.poll_now(Role.POLYMER)
+	config_path.write_text(CONFIG_TEXT.replace("kp = 0.5", "kp = 2.0"), encoding="utf-8")
+	text = run(shell, "config reload")
+	assert "a job is running on polymer" in text and "still using the previous config" in text
+	assert shell.config.boards[Role.POLYMER].kp == 0.5
+	assert boards.links["COM6"].gains[0] == 0.5
 
 
 def test_config_new_writes_the_template_once(shell, tmp_path):

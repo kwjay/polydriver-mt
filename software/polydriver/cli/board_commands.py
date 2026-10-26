@@ -4,7 +4,7 @@ any start of either; where ROLE is optional, leaving it out means both boards.""
 from pathlib import Path
 
 from ..config import BoardSettings, ConfigError, load_config, write_default_config
-from ..devices import BoardState, BoardStatus, NotConnectedError, SettingsApplyError
+from ..devices import BoardState, BoardStatus, JobRunningError, NotConnectedError, SettingsApplyError
 from ..protocol.constants import Role, StatusFlag
 from ..requests import SettingsReport
 from .parsing import DISPENSERS, UsageError, is_role, parse_number, parse_role, parse_roles, role_name, split_args
@@ -272,12 +272,15 @@ class BoardCommands:
 		except ConfigError as error:
 			self.say(f"  {error}\n  still using the previous config")
 			return
-		self.config = config
 		roles = self.session.roles()
 		try:
 			self.session.reload_config(config)
+		except JobRunningError as error:
+			self.say(f"  {error}\n  still using the previous config")
+			return
 		except SettingsApplyError as error:
 			for role, failure in error.failures.items():
 				self.say(f"  {role_name(role)}: settings not applied: {failure}")
+		self.config = config
 		sent = ", ".join(role_name(role) for role in roles) or "no board connected"
 		self.say(f"  reloaded {self.config_path}; settings sent to: {sent}")

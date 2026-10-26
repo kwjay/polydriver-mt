@@ -1,15 +1,17 @@
 import struct
+import threading
+import time
 
 import pytest
 
 from polydriver.config import BoardSettings
 from polydriver.devices import Board, DeviceClock, JobUploadError, Segment, SettingsMismatchError
 from polydriver.devices.board import MIN_SEGMENT_MS
-from polydriver.protocol.constants import JobState, Mode, Role, StatusFlag
+from polydriver.protocol.constants import Command, JobState, Mode, NackReason, Role, StatusFlag
 from polydriver.requests import (
 	ClearEstop, Estop, GetId, GetVersion, JobClear, JobCommit, JobInfo, JobRun, JobSegment, RequestSettings,
 	RequestStatus, SetCommsTimeout, SetFeedforward, SetFilter, SetId, SetMode, SetPid, SetPwm, SetSpeed,
-	SettingsReport, StatusReport, Stop, VersionReport,
+	SettingsReport, StatusReport, Stop, VersionReport, RequestNackError,
 )
 
 VERSION = VersionReport(protocol_version=3, firmware_major=3, firmware_minor=0, firmware_patch=0, max_segments=4)
@@ -68,9 +70,22 @@ def link():
 	return FakeLink()
 
 
+class HostClock:
+	def __init__(self):
+		self.now_s = 0.0
+
+	def __call__(self) -> float:
+		return self.now_s
+
+
 @pytest.fixture
-def board(link):
-	return Board(link)
+def host():
+	return HostClock()
+
+
+@pytest.fixture
+def board(link, host):
+	return Board(link, clock=host)
 
 
 # --- Typed calls ------------------------------------------------------------------
@@ -108,9 +123,10 @@ def test_comms_timeout_can_be_switched_off(board, link):
 
 # --- Status and the device clock --------------------------------------------------------
 
-def test_status_carries_the_unwrapped_device_time(board, link):
+def test_status_carries_the_unwrapped_device_time(board, link, host):
 	link.statuses = [status(4_294_000_000), status(1_000_000)]
 	first = board.status()
+	host.now_s += (2**32 - 4_294_000_000 + 1_000_000) / 1e6
 	second = board.status()
 	assert first.report.raw_speed_hz == 10.0
 	assert first.device_time_us == 4_294_000_000
@@ -144,15 +160,146 @@ def test_a_restart_is_flagged_on_that_status(board, link):
 	assert board.device_restarts == 1
 
 
-def test_a_reappearing_unconfigured_flag_also_counts_as_a_restart(board, link):
+def test_a_reappearing_unconfigured_flag_also_counts_as_a_restart(board, link, host):
 	link.statuses = [status(1_000_000, StatusFlag(0)), status(900_000_000, StatusFlag.UNCONFIGURED)]
 	board.status()
+	host.now_s += 899.0
 	assert board.status().device_restarted
+
+
+def test_status_from_two_threads_is_unwrapped_in_order():
+	class SlowFirstReply(FakeLink):
+		def __init__(self):
+			super().__init__()
+			self.raw_us = 1_000_000
+			self.slow_next = False
+
+		def call(self, request, timeout_s=None):
+			self.raw_us += 100_000
+			raw_us = self.raw_us
+			if self.slow_next:
+				self.slow_next = False
+				time.sleep(0.05)
+			return status(raw_us)
+
+	link = SlowFirstReply()
+	board = Board(link, clock=time.perf_counter)
+	board.status()
+	link.slow_next = True
+	results = []
+	threads = [threading.Thread(target=lambda: results.append(board.status())) for _ in range(2)]
+	for thread in threads:
+		thread.start()
+		time.sleep(0.01)
+	for thread in threads:
+		thread.join()
+	assert not any(r.device_restarted for r in results)
+
+
+def test_a_restart_after_a_long_uptime_is_seen(board, link, host):
+	link.statuses = [status(3_000_000_000), status(3_000_000)]
+	board.status()
+	host.now_s += 3.0
+	assert board.status().device_restarted
+
+
+def test_a_wrap_while_polling_is_not_a_restart(board, link, host):
+	link.statuses = [status(2**32 - 50_000), status(50_000)]
+	board.status()
+	host.now_s += 0.1
+	second = board.status()
+	assert not second.device_restarted
+	assert second.device_time_us == 2**32 + 50_000
+
+
+def test_a_board_clock_that_fell_behind_the_host_restarted(board, link, host):
+	link.statuses = [status(1_000_000), status(3_000_000)]
+	board.status()
+	host.now_s += 10.0
+	assert board.status().device_restarted
+
+
+def test_crystal_drift_is_not_a_restart(board, link, host):
+	link.statuses = [status(1_000_000), status(1_000_000 + 3_600_000_000 + 677_000)]
+	board.status()
+	host.now_s += 3600.0
+	assert not board.status().device_restarted
+
+
+def test_a_host_away_for_several_wraps_counts_them(board, link, host):
+	link.statuses = [status(1_000_000), status(2_000_000)]
+	board.status()
+	host.now_s += (3 * 2**32 + 1_000_000) / 1e6
+	second = board.status()
+	assert not second.device_restarted
+	assert second.device_time_us == 3 * 2**32 + 2_000_000
 
 
 def test_unconfigured_at_the_first_status_is_not_a_restart(board, link):
 	link.statuses = [status(1_000, StatusFlag.UNCONFIGURED)]
 	assert not board.status().device_restarted
+
+
+# --- Reporting changes -------------------------------------------------------------
+
+@pytest.fixture
+def heard(link, host):
+	changes = []
+	return Board(link, clock=host, on_change=changes.append), changes
+
+
+def test_each_change_is_reported_after_it_was_sent(heard, link):
+	board, changes = heard
+	board.set_speed(20.0)
+	board.set_pid(0.5, 1.0, 0.0)
+	board.set_mode(Mode.OPEN_LOOP)
+	board.set_pwm(64)
+	board.set_filter(0.4)
+	board.set_feedforward(128.0, 1.5)
+	board.set_comms_timeout_ms(0)
+	board.set_role(Role.POLYMER)
+	board.stop()
+	board.estop()
+	board.clear_estop()
+	board.run_job()
+	board.clear_job()
+	assert changes == [
+		"speed 20 Hz", "pid 0.5 1 0", "mode OPEN_LOOP", "duty 64", "filter alpha 0.4", "feedforward 128 duty + 1.5 duty/Hz",
+		"comms timeout off", "role stored: polymer", "STOP", "ESTOP", "ESTOP cleared", "job started", "job cleared",
+	]
+
+
+def test_an_upload_is_one_change(heard):
+	board, changes = heard
+	board.upload_job([Segment(20.0, 1000), Segment(40.0, 500, ramp=True)])
+	assert changes == ["job uploaded: 2 segments, 1500 ms"]
+
+
+def test_reads_and_apply_settings_report_nothing(heard):
+	board, changes = heard
+	board.settings()
+	board.apply_settings(BoardSettings(kp=0.8, ki=2.0, kd=0.1), 1500)
+	assert changes == []
+
+
+def test_a_refused_command_is_not_reported(heard, link):
+	board, changes = heard
+
+	def refuse(request, timeout_s=None):
+		raise RequestNackError(Command.SET_SPEED, NackReason.NOT_CONFIGURED)
+
+	link.call = refuse
+	with pytest.raises(RequestNackError):
+		board.set_speed(5.0)
+	assert changes == []
+
+
+def test_a_failing_listener_does_not_fail_the_command(link, host):
+	def broken(change):
+		raise RuntimeError("listener bug")
+
+	Board(link, clock=host, on_change=broken).stop()
+	assert link.sent == [Stop()]
 
 
 # --- Jobs -----------------------------------------------------------------------
@@ -183,7 +330,12 @@ def test_run_and_clear(board, link):
 	([], "empty"),
 	([Segment(10.0, MIN_SEGMENT_MS - 1)], "shorter than"),
 	([Segment(10.0, 100)] * 5, "4 segments"),
-], ids=["empty", "too short", "too many"])
+	([Segment(10.0, 100), Segment(50, 100, duty=True)], "mixes speed and duty"),
+	([Segment(-1.0, 100)], "segment 0 has the value -1"),
+	([Segment(10.0, 100), Segment(float("nan"), 100)], "segment 1 has the value nan"),
+	([Segment(256, 100, duty=True)], "duty 256"),
+	([Segment(float("inf"), 100)], "the value inf"),
+], ids=["empty", "too short", "too many", "mixed", "negative", "nan", "duty above 255", "infinite"])
 def test_jobs_the_board_cannot_run_are_refused_before_sending(board, link, segments, message):
 	with pytest.raises(JobUploadError, match=message):
 		board.upload_job(segments)

@@ -19,6 +19,7 @@ from ..devices import DeviceError, Event, EventKind, NotConnectedError, SessionL
 from ..protocol.constants import NackReason, Role
 from ..protocol.serial_worker import LinkError, LinkOpenError
 from ..requests import RequestError, RequestNackError
+from ..telemetry import RunLogError
 from ..requests.request_queue import QueueStateError, RequestTimeoutError
 from .keys import KeyWatcher
 from .parsing import UsageError, role_name
@@ -58,7 +59,7 @@ def describe(error: BaseException, role: Role | None = None) -> str | None:
 		return f"{error} (`ports` lists the ports; is another program holding it open?)"
 	if isinstance(error, (LinkError, QueueStateError)):
 		return f"link lost: {error}"
-	if isinstance(error, (DeviceError, RequestError, ConfigError, OSError)):
+	if isinstance(error, (DeviceError, RequestError, ConfigError, RunLogError, OSError)):
 		return str(error)
 	return None
 
@@ -170,8 +171,12 @@ class ShellBase(cmd.Cmd):
 	def do_quit(self, arg: str) -> bool:
 		"""quit  - send STOP to every board, close the ports and leave"""
 		self.session.close()
+		self.on_quit()
 		self.say("bye")
 		return True
+
+	def on_quit(self) -> None:
+		"""For command groups that hold something open (the run log); runs after the boards are stopped."""
 
 	do_exit = do_quit
 	do_EOF = do_quit

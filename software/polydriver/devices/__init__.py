@@ -2,7 +2,7 @@ from .board import Board, BoardStatus, DeviceClock, JobUploadError, Segment, Set
 from .fleet import BoardTiming, Fleet, FleetCommand, FleetError, FleetRunError, FleetStateError, FleetUploadError
 from .link import BoardNotRespondingError, DeviceError, Link, LinkCounters, ProtocolVersionError
 from .session import (
-	AlreadyConnectedError, BoardState, Event, EventKind, NoPortError, NotConnectedError, PortInUseError,
+	AlreadyConnectedError, BoardState, Event, EventKind, JobRunningError, NoPortError, NotConnectedError, PortInUseError,
 	RoleMismatchError, Session, SessionClosedError, SessionError, SessionLike, SettingsApplyError, TelemetrySink,
 )
 
@@ -23,6 +23,7 @@ __all__ = [
 	"FleetRunError",
 	"FleetStateError",
 	"FleetUploadError",
+	"JobRunningError",
 	"JobUploadError",
 	"Link",
 	"LinkCounters",

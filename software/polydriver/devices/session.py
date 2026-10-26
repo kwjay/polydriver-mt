@@ -17,7 +17,7 @@ from enum import StrEnum
 from typing import Protocol, TypeVar
 
 from ..config import Config
-from ..protocol.constants import Role
+from ..protocol.constants import JobState, Role
 from ..protocol.serial_worker import LinkError
 from ..requests import Request, SettingsReport, VersionReport
 from ..requests.request_queue import QueueStateError
@@ -70,6 +70,10 @@ class SessionClosedError(SessionError):
 	pass
 
 
+class JobRunningError(SessionError):
+	pass
+
+
 class EventKind(StrEnum):
 	CONNECTED = "connected"
 	NO_ROLE_STORED = "no role stored"
@@ -80,6 +84,7 @@ class EventKind(StrEnum):
 	POLL_RECOVERED = "poll recovered"
 	LINK_LOST = "link lost"
 	DISCONNECTED = "disconnected"
+	COMMAND = "command"
 
 
 EVENT_LOG_LEVELS = {
@@ -232,7 +237,7 @@ class Session:
 			self._release(role)
 			raise
 		try:
-			board = Board(link)
+			board = Board(link, on_change=lambda change: self._emit(EventKind.COMMAND, role, change))
 			stored_role = board.role()
 			if stored_role not in (role, Role.NONE):
 				raise RoleMismatchError(
@@ -262,7 +267,7 @@ class Session:
 		if stored_role is Role.NONE:
 			self._emit(EventKind.NO_ROLE_STORED, role,
 						f"{port} has no stored role, so a swapped port cannot be caught; store {_name(role)} on it")
-		self._emit(EventKind.SETTINGS_APPLIED, role, f"settings sent to {port}")
+		self._emit(EventKind.SETTINGS_APPLIED, role, f"{port}: {settings_text(settings)}")
 		version = link.version
 		self._emit(EventKind.CONNECTED, role, (
 			f"{port}, firmware {version.firmware_major}.{version.firmware_minor}.{version.firmware_patch}, "
@@ -332,9 +337,16 @@ class Session:
 			yield
 
 	def reload_config(self, config: Config) -> None:
+		"""Refused while a board runs a job (by its last poll): new gains or a new timeout must not
+		change a run halfway."""
 		with self._lock:
-			self._config = config
 			entries = [entry for entry in self._entries.values() if entry.state.connected]
+			running = [_name(entry.role) for entry in entries if _job_running(entry.state)]
+			if running:
+				raise JobRunningError(
+					f"a job is running on {', '.join(running)}; reload the config after it ends, or `stop` it first"
+				)
+			self._config = config
 		failures: dict[Role, Exception] = {}
 		for entry in entries:
 			try:
@@ -448,7 +460,7 @@ class Session:
 			settings = entry.board.apply_settings(config.boards[entry.role], config.comms_timeout_ms)
 			entry.needs_settings = entry.settings_failing = False
 			self._update(entry, settings=settings)
-		self._emit(EventKind.SETTINGS_APPLIED, entry.role, f"settings sent to {entry.state.port}")
+		self._emit(EventKind.SETTINGS_APPLIED, entry.role, f"{entry.state.port}: {settings_text(entry.state.settings)}")
 
 	def _lose(self, entry: _Entry, error: Exception) -> None:
 		entry.link.close()
@@ -492,6 +504,17 @@ def _stop_and_close(entry: _Entry) -> None:
 	entry.link.close()
 	if entry.thread is not None and not own_thread:
 		entry.thread.join(JOIN_TIMEOUT_S)
+
+
+def settings_text(s: SettingsReport) -> str:
+	"""What the board holds after apply_settings, as read back from it."""
+	timeout = "off" if s.comms_timeout_ms == 0 else f"{s.comms_timeout_ms / 1000:g} s"
+	return (f"pid {s.kp:g} {s.ki:g} {s.kd:g}, alpha {s.alpha:g}, ff {s.feedforward_offset_duty:g} + "
+			f"{s.feedforward_gain_duty_per_hz:g}/Hz, timeout {timeout}")
+
+
+def _job_running(state: BoardState) -> bool:
+	return state.last_status is not None and state.last_status.report.job_state is JobState.RUNNING
 
 
 def _same_port(a: str, b: str) -> bool:

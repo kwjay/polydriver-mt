@@ -44,7 +44,7 @@ class FakeLink:
 		self.sent = []
 		self.closed = False
 		self.lock = threading.Lock()
-		self.device_time_us = 1_000_000
+		self.boot_s = time.perf_counter() - 1.0
 		self.configured = False
 		self.gains = (0.0, 0.0, 0.0)
 		self.alpha = 1.0
@@ -139,7 +139,7 @@ class FakeLink:
 			if self.status_timeouts > 0:
 				self.status_timeouts -= 1
 				raise RequestTimeoutError("REQ_STAT got no reply after 4 attempts")
-			self.device_time_us += 20_000
+			device_time_us = round((time.perf_counter() - self.boot_s) * 1e6) % 2**32
 			flags = StatusFlag(0) if self.configured else StatusFlag.UNCONFIGURED
 			if self.mode is Mode.OPEN_LOOP:
 				flags |= StatusFlag.OPEN_LOOP
@@ -149,7 +149,7 @@ class FakeLink:
 				speed_hz, duty = self.pwm_duty * self.hz_per_duty, self.pwm_duty
 			else:
 				speed_hz, duty = 12.0, 100
-			return StatusReport(speed_hz, speed_hz, duty, flags, self.device_time_us, 0, 0, 10004, 0, 0, self.job_state, None, 0)
+			return StatusReport(speed_hz, speed_hz, duty, flags, device_time_us, 0, 0, 10004, 0, 0, self.job_state, None, 0)
 		finally:
 			self.status_in_flight = False
 
@@ -186,7 +186,7 @@ class FakeLink:
 
 	def restart(self) -> None:
 		with self.lock:
-			self.device_time_us = 5_000
+			self.boot_s = time.perf_counter() - 0.005
 			self.configured = False
 			self.gains, self.alpha, self.feedforward, self.timeout_ms = (0.0, 0.0, 0.0), 1.0, (0.0, 0.0), 0
 			self.job_state, self.segments = JobState.EMPTY, []

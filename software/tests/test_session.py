@@ -6,9 +6,10 @@ from polydriver.config import BoardSettings
 from polydriver.devices import BoardNotRespondingError, SettingsMismatchError
 from polydriver.devices.board import _f32
 from polydriver.devices.session import (
-	AlreadyConnectedError, EventKind, NoPortError, NotConnectedError, PortInUseError, RoleMismatchError, Session,
+	AlreadyConnectedError, EventKind, JobRunningError, NoPortError, NotConnectedError, PortInUseError, RoleMismatchError,
+	Session,
 )
-from polydriver.protocol.constants import Role
+from polydriver.protocol.constants import JobState, Role
 from polydriver.protocol.serial_worker import LinkLostError
 from polydriver.requests import (
 	GetId, RequestSettings, RequestStatus, SetCommsTimeout, SetFeedforward, SetFilter, SetPid, SetSpeed, Stop,
@@ -292,6 +293,31 @@ def test_board_of_an_unconnected_role_is_an_error(session):
 		session.board(Role.COLOUR)
 	with pytest.raises(NotConnectedError):
 		session.state(Role.COLOUR)
+
+
+def test_commands_to_a_board_become_events(session, recorder):
+	session.connect(Role.POLYMER)
+	session.board(Role.POLYMER).set_speed(20.0)
+	commands = [e for e in recorder.events if e.kind is EventKind.COMMAND]
+	assert [(e.role, e.message) for e in commands] == [(Role.POLYMER, "speed 20 Hz")]
+
+
+def test_settings_applied_says_what_the_board_holds(session, recorder):
+	session.connect(Role.POLYMER)
+	[applied] = [e for e in recorder.events if e.kind is EventKind.SETTINGS_APPLIED]
+	assert applied.message == "COM6: pid 0.5 1 0, alpha 0.4, ff 128 + 1.5/Hz, timeout 2 s"
+
+
+def test_reload_config_is_refused_while_a_job_runs(session, boards):
+	session.connect(Role.POLYMER)
+	link = boards.links["COM6"]
+	link.job_state = JobState.RUNNING
+	session.poll_now(Role.POLYMER)
+	new = make_config(boards={Role.POLYMER: BoardSettings(kp=2.0, ki=0.0, kd=0.0), Role.COLOUR: COLOUR_SETTINGS})
+	with pytest.raises(JobRunningError, match="polymer"):
+		session.reload_config(new)
+	assert link.count(SetPid) == 1
+	assert session.config is not new
 
 
 def test_reload_config_applies_the_new_settings(session, boards):

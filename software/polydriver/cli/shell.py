@@ -13,11 +13,12 @@ from ..devices import Link, Session
 from .base import ShellBase
 from .board_commands import BoardCommands
 from .dev_commands import DevCommands
+from .log_commands import LogCommands
 
 LOG_FILE_NAME = "polydriver.log"
 
 
-class Shell(BoardCommands, DevCommands, ShellBase):
+class Shell(BoardCommands, DevCommands, LogCommands, ShellBase):
 	pass
 
 
@@ -42,13 +43,14 @@ def main(
 
 	log_handler = _log_to_file(config)
 	session = Session(config, link_factory=link_factory or Link.open)
+	shell: Shell | None = None
 	try:
 		shell = Shell(session, config, config_path, stdin=stdin or sys.stdin, stdout=out)
 		shell.say("PolydriverMT shell. Ctrl+C sends STOP to every board. `help` lists the commands, "
 				"`help CMD` explains one.")
 		if not config_path.exists():
 			shell.say(f"no polydriver.toml at {config_path}, so the defaults are used (`config new` writes one)")
-		shell.say(f"log: {log_handler.baseFilename}")
+		shell.say(f"program log (errors, every command): {log_handler.baseFilename}")
 		if args.connect:
 			shell.onecmd("connect")
 		while True:
@@ -59,6 +61,8 @@ def main(
 				shell.interrupt()
 	finally:
 		session.close()
+		if shell is not None:
+			shell.on_quit()
 		logging.getLogger().removeHandler(log_handler)
 		log_handler.close()
 
