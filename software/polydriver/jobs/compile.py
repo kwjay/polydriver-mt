@@ -179,17 +179,23 @@ def _in_line(a: tuple[float, float], m: tuple[float, float], b: tuple[float, flo
 
 # --- Expected grams -------------------------------------------------------------------------
 
+def segment_grams(curve: Curve, segments: Sequence[Segment]) -> tuple[float, ...]:
+	"""The grams each speed segment gives as the board runs it (a ramp from the previous segment's
+	value, 0 Hz before the first), by the calibration."""
+	grams = []
+	previous_hz = 0.0
+	for segment in segments:
+		rate = _mean_rate(curve, previous_hz, segment.value) if segment.ramp else _rate(curve, segment.value)
+		grams.append(rate * segment.duration_ms / 1000)
+		previous_hz = segment.value
+	return tuple(grams)
+
+
 def _grams_per_row(curve: Curve, segments: list[Segment], row_of_segment: list[int], rows: int) -> tuple[float, ...]:
 	"""From the segments as the board will run them, so rounding and merged pieces are counted."""
 	grams = [0.0] * rows
-	previous_hz = 0.0
-	for segment, number in zip(segments, row_of_segment):
-		if segment.ramp:
-			rate = _mean_rate(curve, previous_hz, segment.value)
-		else:
-			rate = _rate(curve, segment.value)
-		grams[number - 1] += rate * segment.duration_ms / 1000
-		previous_hz = segment.value
+	for g, number in zip(segment_grams(curve, segments), row_of_segment):
+		grams[number - 1] += g
 	return tuple(grams)
 
 
