@@ -91,6 +91,14 @@ def test_a_bug_in_a_command_is_reported_and_the_shell_goes_on(shell, boards):
 	assert "target 10 Hz" in run(shell, "speed polymer 10")
 
 
+def test_a_usage_mistake_found_inside_a_board_action_is_still_a_usage_mistake(shell):
+	def action(role):
+		raise UsageError("found late")
+
+	with pytest.raises(UsageError, match="found late"):
+		shell.each([Role.POLYMER], action)
+
+
 def test_quit_stops_and_closes_every_board(shell, boards):
 	run(shell, "connect")
 	assert shell.onecmd("quit") is True
