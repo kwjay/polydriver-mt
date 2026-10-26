@@ -221,10 +221,19 @@ def load_calibration(path: Path, *, old_material: str | None = None,
 	curves = data.get("curves")
 	if not isinstance(curves, list):
 		raise CalibrationFileError(f"{path}: 'curves' must be a list")
+	seen: dict[tuple[str, str], int] = {}
 	for index, entry in enumerate(curves):
 		where = f"{path}: curve {index}"
 		try:
 			dispenser, material, rows = entry["dispenser"], entry["material"], entry["measurements"]
+			dispenser, material = _name(dispenser, "dispenser"), _name(material, "material")
+			if (dispenser, material) in seen:
+				raise CalibrationFileError(
+					f"{where}: {dispenser} / {material} is already curve {seen[dispenser, material]}; keep one of them"
+				)
+			seen[dispenser, material] = index
+			if not rows:
+				raise CalibrationFileError(f"{where} ({dispenser} / {material}): no measurements; remove the curve")
 			for row_index, row in enumerate(rows):
 				measurement = _measurement_from(row, f"{where}, measurement {row_index}")
 				store._add(dispenser, material, measurement)
@@ -251,9 +260,21 @@ def _load_old(path: Path, data: dict, store: CalibrationStore, material: str | N
 			f"{path}: an old calibration file (one board, no materials); load it again with the material it was "
 			"measured with"
 		)
-	for target, entry in data["targets"].items():
-		dispenser = dispensers.get(int(target), f"target {target}")
-		for index, row in enumerate(entry.get("measurements", [])):
+	targets = data["targets"]
+	if not isinstance(targets, dict):
+		raise CalibrationFileError(f"{path}: 'targets' must be an object in an old calibration file")
+	for target, entry in targets.items():
+		try:
+			number = int(target)
+		except ValueError:
+			raise CalibrationFileError(f"{path}: target {target!r} must be a number") from None
+		if not isinstance(entry, dict):
+			raise CalibrationFileError(f"{path}: target {target}: must be an object")
+		rows = entry.get("measurements", [])
+		if not isinstance(rows, list):
+			raise CalibrationFileError(f"{path}: target {target}: 'measurements' must be a list")
+		dispenser = dispensers.get(number, f"target {target}")
+		for index, row in enumerate(rows):
 			where = f"{path}: target {target}, measurement {index}"
 			try:
 				measurement = Measurement(row["speed"], row["grams"], row["duration_s"], None, OLD_METHOD,

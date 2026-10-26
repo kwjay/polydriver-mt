@@ -1,0 +1,57 @@
+{
+  "schema": 1,
+  "materials": [
+    {
+      "name": "Masterbatch",
+      "kind": "masterbatch",
+      "dispenser": "A",
+      "flow_min_g_s": null,
+      "flow_max_g_s": null,
+      "kp": null,
+      "ki": null,
+      "kd": null,
+      "ff_offset_duty": null,
+      "ff_gain_duty_per_hz": null,
+      "note": "Colour concentrate; rename to the product used. Flow window: the lowest reliable flow of dispenser A, from the 5.1 series. Gains: from 5.4."
+    },
+    {
+      "name": "PLA",
+      "kind": "polymer",
+      "dispenser": "B",
+      "flow_min_g_s": null,
+      "flow_max_g_s": null,
+      "kp": null,
+      "ki": null,
+      "kd": null,
+      "ff_offset_duty": null,
+      "ff_gain_duty_per_hz": null,
+      "note": "Flow window and gains not measured yet (5.1, 5.4); the board's config is used until then."
+    },
+    {
+      "name": "PP",
+      "kind": "polymer",
+      "dispenser": "B",
+      "flow_min_g_s": null,
+      "flow_max_g_s": null,
+      "kp": null,
+      "ki": null,
+      "kd": null,
+      "ff_offset_duty": null,
+      "ff_gain_duty_per_hz": null,
+      "note": "Flow window and gains not measured yet (5.1, 5.4); the board's config is used until then."
+    },
+    {
+      "name": "TPU",
+      "kind": "polymer",
+      "dispenser": "B",
+      "flow_min_g_s": null,
+      "flow_max_g_s": null,
+      "kp": null,
+      "ki": null,
+      "kd": null,
+      "ff_offset_duty": null,
+      "ff_gain_duty_per_hz": null,
+      "note": "Flow window and gains not measured yet (5.1, 5.4); the board's config is used until then."
+    }
+  ]
+}

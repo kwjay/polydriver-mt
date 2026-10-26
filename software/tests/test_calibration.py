@@ -259,6 +259,26 @@ def test_a_curve_without_a_saved_hash_takes_the_data_as_it_is(store, tmp_path):
 	assert load_calibration(path).curve("B", "PLA").measurements[0].grams == 3.5
 
 
+def test_a_curve_with_no_measurements_is_reported(tmp_path):
+	path = tmp_path / "calibration.json"
+	path.write_text(json.dumps({"schema": 2, "curves": [
+		{"dispenser": "B", "material": "PLA", "hash": "0" * 64, "measurements": []},
+	]}), encoding="utf-8")
+	with pytest.raises(CalibrationFileError, match="curve 0 .B / PLA.: no measurements"):
+		load_calibration(path)
+
+
+def test_a_curve_listed_twice_is_reported_as_such_not_as_changed_by_hand(store, tmp_path):
+	measured(store, (20.0, 3.0, 30.0))
+	path = tmp_path / "calibration.json"
+	save_calibration(store, path)
+	data = json.loads(path.read_text(encoding="utf-8"))
+	data["curves"].append(dict(data["curves"][0], dispenser=" B "))
+	path.write_text(json.dumps(data), encoding="utf-8")
+	with pytest.raises(CalibrationFileError, match="curve 1: B / PLA is already curve 0"):
+		load_calibration(path)
+
+
 def test_a_bool_is_not_a_number_in_the_file(store, tmp_path):
 	measured(store, (20.0, 3.0, 30.0))
 	path = tmp_path / "calibration.json"
@@ -309,3 +329,18 @@ def test_an_imported_old_file_saves_in_the_new_format(tmp_path):
 	new_path = tmp_path / "new.json"
 	save_calibration(store, new_path)
 	assert load_calibration(new_path).curves() == store.curves()
+
+
+@pytest.mark.parametrize("data, message", [
+	({"targets": [1, 2]}, "'targets' must be an object"),
+	({"targets": {"left": {"measurements": []}}}, "target 'left' must be a number"),
+	({"targets": {"1": [1]}}, "target 1: must be an object"),
+	({"targets": {"1": {"measurements": 5}}}, "target 1: 'measurements' must be a list"),
+	({"targets": {"1": {"measurements": [5]}}}, "target 1, measurement 0: missing or wrong field"),
+])
+def test_a_broken_old_file_names_the_problem_and_the_file(tmp_path, data, message):
+	path = tmp_path / "calibration.json"
+	path.write_text(json.dumps(data), encoding="utf-8")
+	with pytest.raises(CalibrationFileError, match=message) as raised:
+		load_calibration(path, old_material="PLA")
+	assert str(path) in str(raised.value)
