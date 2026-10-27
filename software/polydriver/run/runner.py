@@ -1,6 +1,8 @@
 """Runs a gradient job on both boards (C8.4): compile, upload, start together, watch STATUS.
 
 A run moves IDLE -> UPLOADED -> READY -> RUNNING -> DONE, or to ABORTED from any unfinished state.
+While it runs, the safety rules (safety.py) see every STATUS and Session event and a 0.1 s tick; when
+one says abort, STOP goes to both boards and the run ends ABORTED with that reason.
 upload() compiles the job (nothing reaches a board if it does not fit), sends each board its
 material's gains and feedforward where the material has them, and uploads both halves; READY is
 when both boards report READY. start() sends both RUNs at once (Fleet). From then on the runner
@@ -19,7 +21,7 @@ import logging
 import threading
 import time
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from enum import StrEnum
 
 from ..calibration import CalibrationStore, Curve
@@ -32,11 +34,13 @@ from ..materials import MaterialRegistry
 from ..protocol.constants import JobState, Role
 from ..requests import StatusReport
 from ..telemetry import RunLog, log_board
+from .safety import SafetyLimits, SafetyWatch
 
 logger = logging.getLogger(__name__)
 
 ROLES = (Role.POLYMER, Role.COLOUR)
 EDGE_WRAP = 2**32
+TICK_S = 0.1
 
 
 class RunState(StrEnum):
@@ -151,18 +155,25 @@ class RunProgress:
 	fraction: float
 	polymer: ChannelProgress
 	colour: ChannelProgress
+	reason: str | None = None
+	warnings: tuple[str, ...] = ()
 
 
 class Runner:
 	def __init__(self, session: Session, job: GradientJob, materials: MaterialRegistry, store: CalibrationStore, *,
-				run_log: RunLog | None = None, error_limit: float = ERROR_LIMIT,
+				run_log: RunLog | None = None, error_limit: float = ERROR_LIMIT, limits: SafetyLimits | None = None,
 				clock: Callable[[], float] = time.perf_counter):
+		"""limits: the safety limits; by default silence_s is the config's comms timeout, after which the
+		board stops itself. clock must be the session's, as STATUS times come from it."""
 		self._session = session
 		self._job = job
 		self._materials = materials
 		self._store = store
 		self._log = run_log
 		self._error_limit = error_limit
+		timeout_s = session.config.comms_timeout_s
+		self.limits = limits or (SafetyLimits(silence_s=timeout_s) if timeout_s > 0 else SafetyLimits())
+		self._clock = clock
 		self._fleet = Fleet(session)
 		self._states = RunStates(clock)
 		self._lock = threading.Lock()
@@ -170,8 +181,13 @@ class Runner:
 		self._grams: dict[Role, DeliveredGrams] = {}
 		self._own_settings: set[Role] = set()
 		self._ending = False
+		self._stopping = False
+		self._stop_at_end = False
+		self._watch: SafetyWatch | None = None
+		self._warnings: list[str] = []
 		self._finished = threading.Event()
 		self.program: GradientProgram | None = None
+		self.reason: str | None = None
 
 	@property
 	def state(self) -> RunState:
@@ -227,17 +243,23 @@ class Runner:
 		except FleetRunError as error:
 			self._log_command(error.run)
 			self._log_command(error.stop)
-			self._end(RunState.ABORTED)
+			self._end(RunState.ABORTED, reason=str(error))
 			raise
-		self._states.move(RunState.RUNNING)
+		with self._lock:
+			self._states.move(RunState.RUNNING)
+			self._watch = SafetyWatch(self.program, self.limits, started_s=self._clock())
+		threading.Thread(target=self._keep_watch, name="run-safety", daemon=True).start()
 		self._log_command(command)
 		return command
 
 	def stop(self) -> FleetCommand:
-		"""STOP to both boards, whatever the state; an unfinished run ends ABORTED."""
+		"""STOP to both boards, whatever the state; an unfinished run ends ABORTED. The safety rules
+		stand down first: the boards' ABORTED is this STOP's doing, not a fault."""
+		with self._lock:
+			self._stopping = True
 		command = self._fleet.stop()
 		self._log_command(command)
-		self._end(RunState.ABORTED)
+		self._end(RunState.ABORTED, reason="stopped by the operator")
 		return command
 
 	def wait(self, timeout_s: float | None = None) -> RunState:
@@ -260,13 +282,15 @@ class Runner:
 				channel.expected_grams if channel else None,
 			)
 		elapsed_s = max(c.elapsed_s for c in channels.values())
+		with self._lock:
+			warnings = tuple(self._warnings)
 		return RunProgress(self.state, elapsed_s, total_s, elapsed_s / total_s, channels[Role.POLYMER],
-						channels[Role.COLOUR])
+						channels[Role.COLOUR], self.reason, warnings)
 
 	# --- What the session polls ------------------------------------------------------------
 
 	def record_status(self, role: Role, status: BoardStatus, host_time_s: float) -> None:
-		end = None
+		done = abort = None
 		with self._lock:
 			if role not in ROLES:
 				return
@@ -274,36 +298,69 @@ class Runner:
 			self._latest[role] = report
 			if role in self._grams:
 				self._grams[role].add(report)
-			if len(self._latest) < len(ROLES):
-				return
-			states = {r.job_state for r in self._latest.values()}
-			if self.state is RunState.UPLOADED and states == {JobState.READY}:
-				self._states.move(RunState.READY)
-			elif self.state is RunState.RUNNING:
-				if JobState.ABORTED in states:
-					end = RunState.ABORTED
-				elif states == {JobState.DONE}:
-					end = RunState.DONE
-		if end is not None:
-			self._end(end)
+			if self._watching():
+				abort = self._judge(self._watch.on_status(role, report, host_time_s))
+			if len(self._latest) == len(ROLES):
+				states = {r.job_state for r in self._latest.values()}
+				if self.state is RunState.UPLOADED and states == {JobState.READY}:
+					self._states.move(RunState.READY)
+				elif self.state is RunState.RUNNING and states == {JobState.DONE}:
+					done = True
+		if abort is not None:
+			self._end(RunState.ABORTED, reason=abort, stop=True)
+		elif done:
+			self._end(RunState.DONE)
 
 	def record_event(self, event: Event) -> None:
-		pass
+		with self._lock:
+			abort = self._judge(self._watch.on_event(event)) if self._watching() else None
+		if abort is not None:
+			self._end(RunState.ABORTED, reason=abort, stop=True)
+
+	# --- Safety ---------------------------------------------------------------------------------
+
+	def _watching(self) -> bool:
+		"""Called holding self._lock."""
+		return self._watch is not None and not self._ending and not self._stopping
+
+	def _judge(self, verdict) -> str | None:
+		"""Called holding self._lock: keeps the warnings, returns the abort reason if any."""
+		for warning in verdict.warnings:
+			logger.warning("run: %s", warning)
+		self._warnings += verdict.warnings
+		return verdict.abort
+
+	def _keep_watch(self) -> None:
+		"""The rules that need no STATUS to fire: overtime and a board that falls silent."""
+		while not self._finished.wait(TICK_S):
+			with self._lock:
+				if not self._watching():
+					return
+				abort = self._judge(self._watch.on_tick(self._clock()))
+			if abort is not None:
+				self._end(RunState.ABORTED, reason=abort, stop=True)
+				return
 
 	# --- Ending --------------------------------------------------------------------------------
 
-	def _end(self, state: RunState) -> None:
-		"""Moves to state once and winds the run up on its own thread, so a poll thread is never held."""
+	def _end(self, state: RunState, reason: str | None = None, stop: bool = False) -> None:
+		"""Moves to state once and winds the run up on its own thread, so a poll thread is never held;
+		stop: STOP to both boards first, for a safety abort."""
 		with self._lock:
 			if self._ending:
 				return
 			self._ending = True
+			self.reason, self._stop_at_end = reason, stop
 			if not self._states.finished:
 				self._states.move(state)
+		if reason is not None and state is RunState.ABORTED:
+			logger.warning("run aborted: %s", reason)
 		threading.Thread(target=self._wind_up, name="run-end", daemon=True).start()
 
 	def _wind_up(self) -> None:
 		try:
+			if self._stop_at_end:
+				self._log_command(self._fleet.stop())
 			self._session.remove_sink(self)
 			self._restore_settings()
 			if self._log is not None:
@@ -359,8 +416,13 @@ class Runner:
 			self._log.add_fleet_command(command)
 
 	def _log_run(self) -> None:
+		with self._lock:
+			warnings = list(self._warnings)
 		self._log.set_run({
 			"error_limit": self._error_limit,
+			"limits": asdict(self.limits),
+			"reason": self.reason,
+			"warnings": warnings,
 			"states": [{"state": state.value, "t_s": self._log.relative_s(t)} for state, t in self.history],
 		})
 

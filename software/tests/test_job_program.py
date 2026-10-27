@@ -16,6 +16,7 @@ from polydriver.jobs import (
 	TableCurve,
 	compile_gradient_job,
 	load_job,
+	speed_at,
 )
 from polydriver.jobs.program import ChannelCalibration, _farthest_end
 from polydriver.materials import Kind, Material, MaterialRegistry
@@ -108,6 +109,14 @@ def test_without_a_start_hold_the_job_begins_with_a_10_ms_step():
 	first, second = program.colour.segments[:2]
 	assert (first.ramp, first.duration_ms, second.ramp) == (False, 10, True)
 	assert sum(s.duration_ms for s in program.colour.segments) == 60_000
+
+
+def test_speed_at_is_what_the_board_commands():
+	segments = (Segment(10.0, 1000), Segment(30.0, 2000, ramp=True), Segment(30.0, 500), Segment(0.0, 1000, ramp=True))
+	ticks = board_speeds(list(segments), 4500)
+	assert [speed_at(segments, t) for t in range(0, 4500, 10)] == pytest.approx(ticks)
+	assert (speed_at(segments, 2000), speed_at(segments, 4250), speed_at(segments, 4500)) == (20.0, 7.5, 0.0)
+	assert speed_at((Segment(8.0, 1000, ramp=True),), 250) == 2.0
 
 
 # --- Every curve type fits the board ----------------------------------------------------------

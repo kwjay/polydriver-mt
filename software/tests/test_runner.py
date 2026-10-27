@@ -13,7 +13,8 @@ from polydriver.protocol.constants import JobState, Role, StatusFlag
 from polydriver.protocol.constants import Command, NackReason
 from polydriver.requests import JobClear, JobRun, JobSegment, RequestNackError, Stop
 from polydriver.requests.reports import StatusReport
-from polydriver.run import DeliveredGrams, Runner, RunState, RunStateError, RunStates
+from polydriver.protocol.serial_worker import LinkLostError
+from polydriver.run import DeliveredGrams, Runner, RunState, RunStateError, RunStates, SafetyLimits
 from polydriver.telemetry import start_run_log
 
 from fakes import POLYMER_SETTINGS, Boards, make_config, wait_until
@@ -290,9 +291,10 @@ def test_a_run_that_a_board_refuses_to_start_ends_aborted(rig):
 	rig.link(Role.COLOUR).refuse[JobRun] = RequestNackError(Command.JOB_RUN, NackReason.WRONG_STATE)
 	runner = rig.runner()
 	runner.upload()
-	with pytest.raises(FleetRunError):
+	with pytest.raises(FleetRunError) as raised:
 		runner.start()
 	assert runner.wait(2.0) is RunState.ABORTED
+	assert runner.reason == str(raised.value) and "did not start" in runner.reason
 
 
 def test_after_the_run_the_runner_stops_listening(rig):
@@ -334,16 +336,6 @@ def test_stop_before_the_start_abandons_the_run(rig):
 	assert rig.link(Role.POLYMER).count(Stop) == rig.link(Role.COLOUR).count(Stop) == 1
 
 
-def test_a_board_that_aborts_on_its_own_ends_the_run_aborted(rig):
-	rig.link(Role.POLYMER).job_time_scale = rig.link(Role.COLOUR).job_time_scale = 10.0
-	runner = rig.runner()
-	runner.upload()
-	runner.start()
-	assert wait_until(lambda: runner.progress().elapsed_s > 2)
-	rig.link(Role.COLOUR).abort()
-	assert runner.wait(2.0) is RunState.ABORTED
-
-
 def test_progress_while_running(rig):
 	rig.link(Role.POLYMER).job_time_scale = rig.link(Role.COLOUR).job_time_scale = 10.0
 	runner = rig.runner()
@@ -369,6 +361,125 @@ def test_the_runs_elapsed_time_is_the_furthest_boards(rig):
 	assert progress.elapsed_s == progress.polymer.elapsed_s
 	runner.stop()
 	runner.wait(2.0)
+
+
+# --- Safety (C8.5) ---------------------------------------------------------------------------------
+
+def running(rig, scale=10.0, **kwargs):
+	"""A runner whose 60 s job is running on both boards, on job clocks scale times real time."""
+	rig.link(Role.POLYMER).job_time_scale = rig.link(Role.COLOUR).job_time_scale = scale
+	runner = rig.runner(**kwargs)
+	runner.upload()
+	runner.start()
+	assert wait_until(lambda: runner.progress().elapsed_s > 1)
+	return runner
+
+
+def both_stopped(rig):
+	return all(rig.link(role).count(Stop) >= 1 and rig.link(role).job_state is not JobState.RUNNING
+			for role in (Role.POLYMER, Role.COLOUR))
+
+
+def test_a_lost_link_stops_the_other_board(rig):
+	runner = running(rig)
+	rig.link(Role.COLOUR).fail_with = LinkLostError("COM5 lost")
+	assert runner.wait(3.0) is RunState.ABORTED
+	assert runner.reason.startswith("the colour board's link was lost: COM5 lost")
+	assert rig.link(Role.POLYMER).count(Stop) == 1 and rig.link(Role.POLYMER).job_state is JobState.ABORTED
+
+
+def test_a_board_that_aborts_its_job_stops_the_other(rig):
+	runner = running(rig)
+	rig.link(Role.COLOUR).abort(StatusFlag.COMMS_LOST)
+	assert runner.wait(3.0) is RunState.ABORTED
+	assert "the colour board aborted its job at" in runner.reason
+	assert runner.reason.endswith(": it heard nothing from the host for its comms timeout")
+	assert both_stopped(rig)
+
+
+def test_a_speed_that_stays_off_stops_both_boards(rig):
+	runner = running(rig)
+	rig.link(Role.COLOUR).speed_factor = 0.5
+	assert runner.wait(3.0) is RunState.ABORTED
+	assert runner.reason.startswith("the colour speed was off by more than 25 %")
+	assert both_stopped(rig)
+
+
+def test_an_encoder_stall_warns_at_once_and_stops_the_run_once_it_lasts(rig):
+	runner = running(rig)
+	rig.link(Role.COLOUR).stalled = True
+	assert runner.wait(3.0) is RunState.ABORTED
+	assert runner.reason.endswith("(encoder stalled)")
+	assert [w for w in runner.progress().warnings if w.startswith("the colour encoder stalled at")]
+	assert both_stopped(rig)
+
+
+def test_a_board_that_falls_silent_stops_the_run(rig):
+	runner = running(rig, limits=SafetyLimits(silence_s=0.3))
+	rig.link(Role.COLOUR).status_timeouts = 10**6
+	assert runner.wait(3.0) is RunState.ABORTED
+	assert runner.reason.startswith("no STATUS from the colour board for")
+	assert rig.link(Role.POLYMER).count(Stop) == 1 and rig.link(Role.POLYMER).job_state is JobState.ABORTED
+
+
+def test_a_job_that_never_ends_is_stopped_after_its_time(rig):
+	job = short(rig.store, amount_given={"duration_s": 1.0, "total_flow_g_s": 1.5}, hold_start_s=0.1, hold_end_s=0.1)
+	rig.link(Role.POLYMER).job_time_scale = rig.link(Role.COLOUR).job_time_scale = 1.0
+	runner = rig.runner(job=job, limits=SafetyLimits(overtime_s=0.3))
+	runner.upload()
+	runner.start()
+	rig.link(Role.POLYMER).freeze_job()
+	rig.link(Role.COLOUR).freeze_job()
+	assert runner.wait(3.0) is RunState.ABORTED
+	assert runner.reason == "the job has run more than 0.3 s over its 1 s"
+	assert both_stopped(rig)
+
+
+def test_a_board_that_restarts_mid_run_stops_the_run(rig):
+	runner = running(rig)
+	rig.link(Role.COLOUR).restart()
+	assert runner.wait(3.0) is RunState.ABORTED
+	assert runner.reason.startswith("the colour board")
+	assert "restarted" in runner.reason or "no longer runs its job" in runner.reason
+	assert rig.link(Role.POLYMER).count(Stop) == 1
+
+
+def test_a_finished_run_has_no_reason_and_no_warnings(rig):
+	runner = rig.runner()
+	runner.upload()
+	runner.start()
+	assert runner.wait(5.0) is RunState.DONE
+	assert (runner.reason, runner.progress().warnings) == (None, ())
+
+
+def test_a_stop_says_who_stopped_the_run(rig):
+	runner = running(rig)
+	# The polymer STOP answers late, so the colour board's ABORTED is polled while stop() waits.
+	rig.link(Role.POLYMER).delays_s[Stop] = 0.2
+	runner.stop()
+	assert runner.wait(2.0) is RunState.ABORTED
+	assert runner.reason == "stopped by the operator"
+	assert rig.link(Role.POLYMER).count(Stop) == rig.link(Role.COLOUR).count(Stop) == 1
+
+
+def test_the_silence_limit_follows_the_comms_timeout(rig):
+	rig.session.reload_config(replace(rig.config, comms_timeout_s=1.5))
+	assert rig.runner().limits.silence_s == 1.5
+	rig.session.reload_config(replace(rig.config, comms_timeout_s=0.0))
+	assert rig.runner().limits.silence_s == SafetyLimits().silence_s
+	assert rig.runner(limits=SafetyLimits(silence_s=0.7)).limits.silence_s == 0.7
+
+
+def test_the_run_log_gets_the_reason_the_warnings_and_the_limits(rig):
+	log = start_run_log(rig.session, rig.config)
+	runner = running(rig, run_log=log)
+	rig.link(Role.COLOUR).stalled = True
+	runner.wait(3.0)
+	run = json.loads(log.sidecar_path.read_text(encoding="utf-8"))["run"]
+	assert run["reason"] == runner.reason and run["reason"].endswith("(encoder stalled)")
+	assert run["warnings"] and run["warnings"][0].startswith("the colour encoder stalled at")
+	assert run["limits"] == {"tracking_fraction": 0.25, "tracking_floor_hz": 1.0, "tracking_s": 3.0,
+							"overtime_s": 2.0, "silence_s": 2.0}
 
 
 # --- The run log -----------------------------------------------------------------------------------

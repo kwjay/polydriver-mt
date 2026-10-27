@@ -12,7 +12,7 @@ board starts a job's first ramp from 0 Hz, so a job without a start hold begins 
 
 import math
 from bisect import bisect_left
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
 from ..calibration import CalibrationStore, Curve
@@ -109,6 +109,19 @@ def compile_gradient_job(job: GradientJob, materials: MaterialRegistry, store: C
 	if problems:
 		raise JobCompileError("; ".join(problems))
 	return GradientProgram(channels["polymer"], channels["colour"], pieces[-1][1], error_limit)
+
+
+def speed_at(segments: Sequence[Segment], elapsed_ms: float) -> float:
+	"""What the board commands elapsed_ms into its job: a step's value, or a ramp from the previous
+	segment's value (0 Hz before the first) to its own; 0 Hz once the job is over."""
+	start, previous = 0, 0.0
+	for segment in segments:
+		if elapsed_ms < start + segment.duration_ms:
+			if not segment.ramp:
+				return segment.value
+			return previous + (segment.value - previous) * (elapsed_ms - start) / segment.duration_ms
+		start, previous = start + segment.duration_ms, segment.value
+	return 0.0
 
 
 def describe_curve(curve: ProgressCurve) -> str:

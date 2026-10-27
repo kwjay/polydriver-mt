@@ -6,7 +6,7 @@ from .compile import (
 from .curves import (
 	CURVE_NAMES, CurveError, ExponentialCurve, LinearCurve, ProgressCurve, SCurve, StepsCurve, TableCurve, make_curve,
 )
-from .program import ERROR_LIMIT, ChannelProgram, GradientProgram, compile_gradient_job, describe_curve
+from .program import ERROR_LIMIT, ChannelProgram, GradientProgram, compile_gradient_job, describe_curve, speed_at
 from .profile import Amount, GradientProfile, ProfileError, Sample, resolve_amount
 from .recipe import JOB_SCHEMA, CalibrationRef, GradientJob, JobError, JobFileError, job_dict, load_job, save_job
 
@@ -52,4 +52,5 @@ __all__ = [
 	"resolve_amount",
 	"save_job",
 	"segment_grams",
+	"speed_at",
 ]

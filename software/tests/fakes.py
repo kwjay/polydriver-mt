@@ -69,6 +69,11 @@ class FakeLink:
 		self.edge_base = 0
 		self.run_started_s: float | None = None
 		self.stopped_ms: int | None = None
+		# Faults while a job runs: the screw turns at speed_factor x the commanded speed, or not at all
+		# (the encoder stalls); extra_flags go into every STATUS.
+		self.speed_factor = 1.0
+		self.stalled = False
+		self.extra_flags = StatusFlag(0)
 
 	def call(self, request, timeout_s=None):
 		with self.lock:
@@ -154,9 +159,12 @@ class FakeLink:
 				speed_hz, duty = self.pwm_duty * self.hz_per_duty, self.pwm_duty
 			else:
 				speed_hz, duty = 12.0, 100
+			flags |= self.extra_flags
 			elapsed_ms, segment, edges = self._job_now()
 			if self.run_started_s is not None:
-				speed_hz = self._speed_at(elapsed_ms) if self.job_state is JobState.RUNNING else 0.0
+				speed_hz = self._speed_at(elapsed_ms) * self.speed_factor if self.job_state is JobState.RUNNING else 0.0
+				if self.stalled and self.job_state is JobState.RUNNING:
+					speed_hz, flags = 0.0, flags | StatusFlag.ENCODER_STALLED
 			return StatusReport(speed_hz, speed_hz, duty, flags, device_time_us, (self.edge_base + edges) % 2**32, 0, 10004,
 								0, 0, self.job_state, segment, elapsed_ms)
 		finally:
@@ -225,10 +233,17 @@ class FakeLink:
 			self.stopped_ms = self._elapsed_ms()
 			self.job_state = state
 
-	def abort(self) -> None:
-		"""The board aborts on its own, as on a comms timeout or ESTOP."""
+	def abort(self, flags: StatusFlag = StatusFlag(0)) -> None:
+		"""The board aborts on its own, as on a comms timeout (COMMS_LOST) or ESTOP."""
 		with self.lock:
+			self.extra_flags |= flags
 			self._end_job()
+
+	def freeze_job(self) -> None:
+		"""The job's clock stops, so the job never ends."""
+		with self.lock:
+			if self.job_state is JobState.RUNNING:
+				self.stopped_ms = self._elapsed_ms()
 
 	def _refuse_while_running(self, command: Command) -> None:
 		if self.job_state is JobState.RUNNING:
