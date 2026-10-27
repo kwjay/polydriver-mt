@@ -112,8 +112,16 @@ class GradientJob:
 def save_job(job: GradientJob, path: Path) -> None:
 	"""Written whole to a temporary file and moved over the old one, so it is never half written."""
 	path = Path(path)
+	path.parent.mkdir(parents=True, exist_ok=True)
+	temporary = path.with_name(path.name + ".tmp")
+	temporary.write_text(json.dumps(job_dict(job), indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+	os.replace(temporary, path)
+
+
+def job_dict(job: GradientJob) -> dict[str, Any]:
+	"""The job as its file holds it."""
 	curve, curve_params, table = job.curve.spec()
-	data = {
+	return {
 		"schema": JOB_SCHEMA,
 		"name": job.name,
 		"created": job.created,
@@ -128,10 +136,6 @@ def save_job(job: GradientJob, path: Path) -> None:
 		"pid_override": None,
 		"run_defaults": {"log": job.log, "live_plot": job.live_plot},
 	}
-	path.parent.mkdir(parents=True, exist_ok=True)
-	temporary = path.with_name(path.name + ".tmp")
-	temporary.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-	os.replace(temporary, path)
 
 
 def load_job(path: Path) -> GradientJob:

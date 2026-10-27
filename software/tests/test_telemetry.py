@@ -8,7 +8,8 @@ from polydriver.devices import BoardStatus, Event, EventKind, Segment, Session
 from polydriver.devices.fleet import BoardTiming, FleetCommand
 from polydriver.protocol.constants import Command, JobState, Role, StatusFlag
 from polydriver.requests import StatusReport
-from polydriver.telemetry import COLUMNS, RunLog, RunLogError, start_run_log
+from polydriver.config import BoardSettings
+from polydriver.telemetry import COLUMNS, RunLog, RunLogError, log_board, start_run_log
 
 from fakes import Boards, make_config, wait_until
 
@@ -235,6 +236,15 @@ def test_board_details_and_the_uploaded_job_go_in_the_sidecar(log):
 	assert side["job"] == {"name": "PP red 1-5 %"}
 
 
+def test_the_expected_and_estimated_grams_go_with_their_board(log):
+	log.set_board(Role.COLOUR, port="COM5", firmware="3.0.0", protocol=3, settings={})
+	log.set_grams(Role.COLOUR, expected_g=19.9)
+	log.set_grams(Role.COLOUR, estimated_g=20.1)
+	log.close()
+	board = read_json(log.sidecar_path)["boards"]["colour"]
+	assert (board["expected_g"], board["estimated_g"], board["port"]) == (19.9, 20.1, "COM5")
+
+
 def test_segments_without_board_details_are_kept_too(log):
 	log.set_segments(Role.COLOUR, [Segment(100, 3000, duty=True)])
 	log.close()
@@ -310,6 +320,19 @@ def test_a_sidecar_write_leaves_no_temporary_file(log, tmp_path):
 
 
 # --- With a session --------------------------------------------------------------------------
+
+def test_log_board_records_the_settings_a_board_holds_now(tmp_path):
+	boards = Boards({"COM6": Role.POLYMER, "COM5": Role.COLOUR})
+	config = make_config(base_dir=tmp_path)
+	with Session(config, link_factory=boards) as session:
+		session.connect(Role.POLYMER)
+		log = start_run_log(session, config)
+		session.apply_settings(Role.POLYMER, BoardSettings(kp=3.0, ki=0.5, kd=0.0))
+		log_board(log, session, Role.POLYMER)
+		log.close()
+	board = read_json(log.sidecar_path)["boards"]["polymer"]
+	assert (board["settings"]["kp"], board["settings"]["ki"], board["port"]) == (3.0, 0.5, "COM6")
+
 
 def test_start_run_log_follows_a_session(tmp_path):
 	boards = Boards({"COM6": Role.POLYMER, "COM5": Role.COLOUR})

@@ -8,7 +8,7 @@ from .curves import (
 )
 from .program import ERROR_LIMIT, ChannelProgram, GradientProgram, compile_gradient_job, describe_curve
 from .profile import Amount, GradientProfile, ProfileError, Sample, resolve_amount
-from .recipe import JOB_SCHEMA, CalibrationRef, GradientJob, JobError, JobFileError, load_job, save_job
+from .recipe import JOB_SCHEMA, CalibrationRef, GradientJob, JobError, JobFileError, job_dict, load_job, save_job
 
 __all__ = [
 	"CURVE_NAMES",
@@ -46,6 +46,7 @@ __all__ = [
 	"compile_gradient_job",
 	"compile_rate_job",
 	"describe_curve",
+	"job_dict",
 	"load_job",
 	"make_curve",
 	"resolve_amount",

@@ -329,6 +329,44 @@ def test_reload_config_applies_the_new_settings(session, boards):
 	assert link.alpha == _f32(0.9)
 
 
+def test_apply_settings_sends_other_settings_to_one_board_and_keeps_the_config(session, boards, recorder):
+	session.add_sink(recorder)
+	session.connect(Role.POLYMER)
+	session.connect(Role.COLOUR)
+	config = session.config
+	sent_to_colour = len(boards.links["COM5"].sent)
+	report = session.apply_settings(Role.POLYMER, BoardSettings(kp=3.0, ki=0.5, kd=0.0, alpha=0.4))
+	assert boards.links["COM6"].gains == (3.0, 0.5, 0.0) and report.kp == 3.0
+	assert session.state(Role.POLYMER).settings == report
+	assert not [r for r in boards.links["COM5"].sent[sent_to_colour:] if not isinstance(r, RequestStatus)]
+	assert session.config is config
+	assert any(e.kind is EventKind.SETTINGS_APPLIED and e.role is Role.POLYMER and "pid 3 0.5 0," in e.message
+			for e in recorder.events)
+
+
+def test_apply_settings_without_settings_puts_the_config_back(session, boards):
+	session.connect(Role.POLYMER)
+	session.apply_settings(Role.POLYMER, BoardSettings(kp=3.0, ki=0.5, kd=0.0))
+	session.apply_settings(Role.POLYMER)
+	assert boards.links["COM6"].gains == (_f32(session.config.boards[Role.POLYMER].kp),
+										_f32(session.config.boards[Role.POLYMER].ki),
+										_f32(session.config.boards[Role.POLYMER].kd))
+
+
+def test_apply_settings_is_refused_while_that_board_runs_a_job(session, boards):
+	session.connect(Role.POLYMER)
+	boards.links["COM6"].job_state = JobState.RUNNING
+	session.poll_now(Role.POLYMER)
+	with pytest.raises(JobRunningError, match="polymer"):
+		session.apply_settings(Role.POLYMER, BoardSettings(kp=3.0, ki=0.5, kd=0.0))
+	assert boards.links["COM6"].count(SetPid) == 1
+
+
+def test_apply_settings_needs_the_board_connected(session):
+	with pytest.raises(NotConnectedError):
+		session.apply_settings(Role.COLOUR)
+
+
 def test_a_reload_during_connect_reaches_the_new_board(boards):
 	new = make_config(boards={Role.POLYMER: BoardSettings(kp=2.0, ki=0.0, kd=0.0), Role.COLOUR: COLOUR_SETTINGS})
 

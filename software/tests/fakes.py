@@ -64,6 +64,11 @@ class FakeLink:
 		self.status_delay_s = 0.0
 		self.status_in_flight = False
 		self.times: dict[type, tuple[float, float, float | None, int]] = {}
+		# The job runs on job_time_scale times the real time, so a 60 s job takes 0.6 s at 100.
+		self.job_time_scale = 1.0
+		self.edge_base = 0
+		self.run_started_s: float | None = None
+		self.stopped_ms: int | None = None
 
 	def call(self, request, timeout_s=None):
 		with self.lock:
@@ -104,6 +109,7 @@ class FakeLink:
 				case JobClear():
 					self._refuse_while_running(Command.JOB_CLEAR)
 					self.job_state, self.segments = JobState.EMPTY, []
+					self.run_started_s, self.stopped_ms = None, None
 				case JobSegment(index=index):
 					self._refuse_while_running(Command.JOB_SEGMENT)
 					if index != len(self.segments):
@@ -123,11 +129,10 @@ class FakeLink:
 						raise RequestNackError(Command.JOB_RUN, NackReason.WRONG_MODE)
 					if not duty_job and not self.configured:
 						raise RequestNackError(Command.JOB_RUN, NackReason.NOT_CONFIGURED)
-					self.job_state = JobState.RUNNING
+					self.job_state, self.run_started_s, self.stopped_ms = JobState.RUNNING, time.perf_counter(), None
 				case Stop():
 					self.pwm_duty = 0
-					if self.job_state is JobState.RUNNING:
-						self.job_state = JobState.ABORTED
+					self._end_job()
 			return None
 
 	def _status(self) -> StatusReport:
@@ -149,9 +154,81 @@ class FakeLink:
 				speed_hz, duty = self.pwm_duty * self.hz_per_duty, self.pwm_duty
 			else:
 				speed_hz, duty = 12.0, 100
-			return StatusReport(speed_hz, speed_hz, duty, flags, device_time_us, 0, 0, 10004, 0, 0, self.job_state, None, 0)
+			elapsed_ms, segment, edges = self._job_now()
+			if self.run_started_s is not None:
+				speed_hz = self._speed_at(elapsed_ms) if self.job_state is JobState.RUNNING else 0.0
+			return StatusReport(speed_hz, speed_hz, duty, flags, device_time_us, (self.edge_base + edges) % 2**32, 0, 10004,
+								0, 0, self.job_state, segment, elapsed_ms)
 		finally:
 			self.status_in_flight = False
+
+	# --- The job, run on its own clock --------------------------------------------------
+
+	def _elapsed_ms(self) -> int:
+		if self.stopped_ms is not None:
+			return self.stopped_ms
+		return int((time.perf_counter() - self.run_started_s) * 1000 * self.job_time_scale)
+
+	def _job_now(self) -> tuple[int, int | None, int]:
+		"""(elapsed ms, segment index, edges since the start) as the board reports them; a job that
+		has run its time is DONE."""
+		if self.run_started_s is None:
+			return 0, None, 0
+		total_ms = sum(s.duration_ms for s in self.segments)
+		elapsed_ms = min(self._elapsed_ms(), total_ms)
+		if self.job_state is JobState.RUNNING and elapsed_ms >= total_ms:
+			self.job_state, self.stopped_ms = JobState.DONE, total_ms
+		segment = self._segment_at(elapsed_ms) if self.job_state is JobState.RUNNING else None
+		return elapsed_ms, segment, int(self._edges_until(elapsed_ms))
+
+	def _segment_at(self, elapsed_ms: int) -> int:
+		start = 0
+		for index, segment in enumerate(self.segments):
+			if elapsed_ms < start + segment.duration_ms:
+				return index
+			start += segment.duration_ms
+		return len(self.segments) - 1
+
+	def _hz(self, segment) -> float:
+		return segment.value * self.hz_per_duty if segment.duty else segment.value
+
+	def _speed_at(self, elapsed_ms: float) -> float:
+		start, previous = 0, 0.0
+		for segment in self.segments:
+			if elapsed_ms < start + segment.duration_ms:
+				if not segment.ramp:
+					return self._hz(segment)
+				return previous + (self._hz(segment) - previous) * (elapsed_ms - start) / segment.duration_ms
+			start, previous = start + segment.duration_ms, self._hz(segment)
+		return 0.0
+
+	def _edges_until(self, elapsed_ms: float) -> float:
+		"""The encoder edges of a screw that follows the job exactly: the integral of its speed."""
+		edges, start, previous = 0.0, 0, 0.0
+		for segment in self.segments:
+			length = min(segment.duration_ms, max(0.0, elapsed_ms - start))
+			if length <= 0:
+				break
+			end_hz = self._hz(segment)
+			if segment.ramp:
+				reached = previous + (end_hz - previous) * length / segment.duration_ms
+				edges += (previous + reached) / 2 * length / 1000
+			else:
+				edges += end_hz * length / 1000
+			start, previous = start + segment.duration_ms, end_hz
+		return edges
+
+	def _end_job(self, state: JobState = JobState.ABORTED) -> None:
+		if self.job_state is JobState.RUNNING:
+			self._job_now()
+		if self.job_state is JobState.RUNNING:
+			self.stopped_ms = self._elapsed_ms()
+			self.job_state = state
+
+	def abort(self) -> None:
+		"""The board aborts on its own, as on a comms timeout or ESTOP."""
+		with self.lock:
+			self._end_job()
 
 	def _refuse_while_running(self, command: Command) -> None:
 		if self.job_state is JobState.RUNNING:
@@ -191,6 +268,7 @@ class FakeLink:
 			self.gains, self.alpha, self.feedforward, self.timeout_ms = (0.0, 0.0, 0.0), 1.0, (0.0, 0.0), 0
 			self.job_state, self.segments = JobState.EMPTY, []
 			self.mode, self.estop, self.pwm_duty = Mode.CLOSED_LOOP, False, 0
+			self.run_started_s, self.stopped_ms = None, None
 
 	def count(self, request_type) -> int:
 		with self.lock:

@@ -127,6 +127,7 @@ class RunLog:
 			"settings": settings or {},
 			"boards": {},
 			"job": None,
+			"run": None,
 			"fleet": [],
 			"events": [],
 			"rows": 0,
@@ -205,6 +206,27 @@ class RunLog:
 			board = self._sidecar["boards"].setdefault(_name(role), {})
 			board.update(segments=segments_list(segments), calibration_hash=calibration_hash)
 			self._write_sidecar()
+
+	def set_grams(self, role: Role, *, expected_g: float | None = None, estimated_g: float | None = None) -> None:
+		"""What the job should deliver on that board (by the calibration) and what its edge counts say it
+		did; either can come later."""
+		with self._lock:
+			board = self._sidecar["boards"].setdefault(_name(role), {})
+			if expected_g is not None:
+				board["expected_g"] = expected_g
+			if estimated_g is not None:
+				board["estimated_g"] = estimated_g
+			self._write_sidecar()
+
+	def set_run(self, run: dict) -> None:
+		"""How the run went, from the runner: its states and limits."""
+		with self._lock:
+			self._sidecar["run"] = _plain(run)
+			self._write_sidecar()
+
+	def relative_s(self, host_time_s: float) -> float:
+		"""A host perf_counter time as seconds since this run started, as the log's other times."""
+		return round(host_time_s - self._started_s, 6)
 
 	def set_job(self, job: Any) -> None:
 		with self._lock:
@@ -305,9 +327,14 @@ def start_run_log(
 		settings={"comms_timeout_s": config.comms_timeout_s, "poll_hz": config.logging.poll_hz},
 	)
 	for role in roles:
-		state = session.state(role)
-		v = state.version
-		log.set_board(role, port=state.port, firmware=f"{v.firmware_major}.{v.firmware_minor}.{v.firmware_patch}",
-					protocol=v.protocol_version, settings=settings_dict(state.settings))
+		log_board(log, session, role)
 	log.follow(session)
 	return log
+
+
+def log_board(log: RunLog, session: SessionLike, role: Role) -> None:
+	"""The board's port, firmware and the settings it holds now, as the session last read them."""
+	state = session.state(role)
+	v = state.version
+	log.set_board(role, port=state.port, firmware=f"{v.firmware_major}.{v.firmware_minor}.{v.firmware_patch}",
+				protocol=v.protocol_version, settings=settings_dict(state.settings))

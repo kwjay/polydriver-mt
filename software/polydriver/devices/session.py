@@ -16,7 +16,7 @@ from dataclasses import dataclass, replace
 from enum import StrEnum
 from typing import Protocol, TypeVar
 
-from ..config import Config
+from ..config import BoardSettings, Config
 from ..protocol.constants import JobState, Role
 from ..protocol.serial_worker import LinkError
 from ..requests import Request, SettingsReport, VersionReport
@@ -159,6 +159,8 @@ class SessionLike(Protocol):
 	def paused_polling(self) -> AbstractContextManager[None]: ...
 
 	def reload_config(self, config: Config) -> None: ...
+
+	def apply_settings(self, role: Role, settings: BoardSettings | None = None) -> SettingsReport: ...
 
 	def stop_all(self) -> dict[Role, Exception]: ...
 
@@ -356,6 +358,17 @@ class Session:
 		if failures:
 			raise SettingsApplyError(failures)
 
+	def apply_settings(self, role: Role, settings: BoardSettings | None = None) -> SettingsReport:
+		"""Sends these settings to one board (the config's when None), as for a run whose material has
+		its own gains; the config stays as it is, so a restart or a reload puts the config's back.
+		Refused while that board runs a job."""
+		entry = self._connected_entry(role)
+		with self._lock:
+			if _job_running(entry.state):
+				raise JobRunningError(f"a job is running on {_name(role)}; its settings stay until the job ends")
+		self._apply(entry, settings)
+		return entry.state.settings
+
 	def stop_all(self) -> dict[Role, Exception]:
 		with self._lock:
 			entries = [entry for entry in self._entries.values() if entry.state.connected]
@@ -453,11 +466,11 @@ class Session:
 					self._emit(EventKind.SETTINGS_FAILED, role, f"{error}; trying again at the next poll")
 		return None
 
-	def _apply(self, entry: _Entry) -> None:
+	def _apply(self, entry: _Entry, board_settings: BoardSettings | None = None) -> None:
 		with entry.apply_lock:
 			with self._lock:
 				config = self._config
-			settings = entry.board.apply_settings(config.boards[entry.role], config.comms_timeout_ms)
+			settings = entry.board.apply_settings(board_settings or config.boards[entry.role], config.comms_timeout_ms)
 			entry.needs_settings = entry.settings_failing = False
 			self._update(entry, settings=settings)
 		self._emit(EventKind.SETTINGS_APPLIED, entry.role, f"{entry.state.port}: {settings_text(entry.state.settings)}")
