@@ -231,8 +231,10 @@ def test_stop_ends_a_running_job(fleet, polymer, colour):
 
 
 def test_stop_reaches_one_board_when_the_other_is_lost(session, fleet, polymer, colour):
-	colour.fail_with = LinkLostError("COM5 lost")
-	command = fleet.stop()
+	# Polling held, so the link fails during the STOP and not first in a poll (that case is next).
+	with session.paused_polling():
+		colour.fail_with = LinkLostError("COM5 lost")
+		command = fleet.stop()
 	assert polymer.count(Stop) == 1
 	assert set(command.failures) == {Role.COLOUR}
 	assert "COM5 lost" in command.failures[Role.COLOUR]
