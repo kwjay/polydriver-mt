@@ -547,6 +547,15 @@ def test_after_an_operator_stop_the_log_ends_with_both_boards_stopped(rig):
 	assert last_logged_states(log) == {"polymer": "ABORTED", "colour": "ABORTED"}
 
 
+def test_after_a_stop_the_progress_shows_the_boards_final_state(rig):
+	slow_polls(rig)
+	runner = running(rig)
+	runner.stop()
+	assert runner.wait(2.0) is RunState.ABORTED
+	progress = runner.progress()
+	assert (progress.polymer.job_state, progress.colour.job_state) == (JobState.ABORTED, JobState.ABORTED)
+
+
 def test_a_board_lost_at_the_end_does_not_keep_the_other_out_of_the_log(rig, caplog):
 	slow_polls(rig)
 	log = start_run_log(rig.session, rig.config)

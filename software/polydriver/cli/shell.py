@@ -5,21 +5,26 @@ import argparse
 import logging
 import sys
 from collections.abc import Callable
+from dataclasses import replace
 from pathlib import Path
 from typing import TextIO
 
 from ..config import DEFAULT_CONFIG_PATH, Config, ConfigError, load_config
 from ..devices import Link, Session
+from ..protocol.constants import Role
+from ..sim import SimBench, SimBoard
 from .base import ShellBase
 from .board_commands import BoardCommands
 from .calibrate_commands import CalibrateCommands
 from .dev_commands import DevCommands
+from .job_commands import JobCommands
 from .log_commands import LogCommands
+from .run_commands import RunCommands
 
 LOG_FILE_NAME = "polydriver.log"
 
 
-class Shell(BoardCommands, DevCommands, LogCommands, CalibrateCommands, ShellBase):
+class Shell(BoardCommands, DevCommands, LogCommands, CalibrateCommands, JobCommands, RunCommands, ShellBase):
 	pass
 
 
@@ -33,6 +38,8 @@ def main(
 	parser = argparse.ArgumentParser(prog="polydriver", description="PolydriverMT control shell")
 	parser.add_argument("--config", default=str(DEFAULT_CONFIG_PATH), help="config file (default: polydriver.toml)")
 	parser.add_argument("--connect", action="store_true", help="connect both boards at start")
+	parser.add_argument("--sim", action="store_true",
+						help="two simulated boards on the config's ports instead of the serial ports (polydriver.sim)")
 	args = parser.parse_args(argv)
 	out = stdout or sys.stdout
 	config_path = Path(args.config)
@@ -42,6 +49,10 @@ def main(
 		print(error, file=out)
 		return 2
 
+	sim_ports = None
+	if args.sim:
+		config, link_factory = _simulated(config)
+		sim_ports = config.ports
 	log_handler = _log_to_file(config)
 	session = Session(config, link_factory=link_factory or Link.open)
 	shell: Shell | None = None
@@ -52,6 +63,9 @@ def main(
 		if not config_path.exists():
 			shell.say(f"no polydriver.toml at {config_path}, so the defaults are used (`config new` writes one)")
 		shell.say(f"program log (errors, every command): {log_handler.baseFilename}")
+		if sim_ports is not None:
+			shell.say(f"simulated boards on {sim_ports[Role.POLYMER]} (polymer) and {sim_ports[Role.COLOUR]} (colour); "
+					"no serial port is opened")
 		if args.connect:
 			shell.onecmd("connect")
 		while True:
@@ -66,6 +80,14 @@ def main(
 			shell.on_quit()
 		logging.getLogger().removeHandler(log_handler)
 		log_handler.close()
+
+
+def _simulated(config: Config) -> tuple[Config, Callable[[str], Link]]:
+	"""A SimBench on the config's ports, or on SIM-POLYMER and SIM-COLOUR where the config names none."""
+	defaults = {Role.POLYMER: SimBench.POLYMER_PORT, Role.COLOUR: SimBench.COLOUR_PORT}
+	ports = {role: config.ports.get(role) or port for role, port in defaults.items()}
+	bench = SimBench({ports[role]: SimBoard(role) for role in defaults})
+	return replace(config, ports=ports), bench.link_factory
 
 
 def _log_to_file(config: Config) -> logging.FileHandler:

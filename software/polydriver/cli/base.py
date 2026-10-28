@@ -17,6 +17,9 @@ from typing import TextIO
 
 from ..calibration import CalibrationError
 from ..config import Config, ConfigError
+from ..jobs import CurveError, JobCompileError, JobError, ProfileError
+from ..materials import MaterialError
+from ..run import RunStateError
 from ..devices import DeviceError, Event, EventKind, NotConnectedError, SessionLike
 from ..protocol.constants import NackReason, Role
 from ..protocol.serial_worker import LinkError, LinkOpenError
@@ -61,7 +64,8 @@ def describe(error: BaseException, role: Role | None = None) -> str | None:
 		return f"{error} (`ports` lists the ports; is another program holding it open?)"
 	if isinstance(error, (LinkError, QueueStateError)):
 		return f"link lost: {error}"
-	if isinstance(error, (DeviceError, RequestError, ConfigError, RunLogError, CalibrationError, OSError)):
+	if isinstance(error, (DeviceError, RequestError, ConfigError, RunLogError, CalibrationError, MaterialError,
+						JobError, JobCompileError, CurveError, ProfileError, RunStateError, OSError)):
 		return str(error)
 	return None
 
@@ -180,10 +184,14 @@ class ShellBase(cmd.Cmd):
 
 	def do_quit(self, arg: str) -> bool:
 		"""quit  - send STOP to every board, close the ports and leave"""
+		self.before_quit()
 		self.session.close()
 		self.on_quit()
 		self.say("bye")
 		return True
+
+	def before_quit(self) -> None:
+		"""For command groups with something going on the boards (a run); runs before they are stopped."""
 
 	def on_quit(self) -> None:
 		"""For command groups that hold something open (the run log); runs after the boards are stopped."""

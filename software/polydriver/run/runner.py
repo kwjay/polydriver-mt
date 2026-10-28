@@ -361,8 +361,8 @@ class Runner:
 		try:
 			if self._stop_at_end:
 				self._log_command(self._fleet.stop())
-			self._session.remove_sink(self)
 			self._poll_boards()
+			self._session.remove_sink(self)
 			self._restore_settings()
 			if self._log is not None:
 				with self._lock:
@@ -388,8 +388,8 @@ class Runner:
 				self._own_settings.add(role)
 
 	def _poll_boards(self) -> None:
-		"""One poll of each connected board after the run, so the run log ends with the state the run
-		left them in (STOPped ones ABORTED) and the session sees the job has ended."""
+		"""One poll of each connected board after the run, so the run log and the progress end with the
+		state the run left them in (STOPped ones ABORTED) and the session sees the job has ended."""
 		connected = self._session.roles()
 		for role in ROLES:
 			if role not in connected:
