@@ -8,16 +8,22 @@ version = "0.1.0"
 description = "Host software for the PolydriverMT two-channel gradient dispenser"
 requires-python = "~=3.12.0"
 dependencies = [
+    "pyqtgraph==0.14.0",
     "pyserial==3.5",
+    "PySide6==6.12.0",
     "tomli-w==1.2.0",
 ]
 
 [project.scripts]
 polydriver = "polydriver.cli:main"   # the shell; same as python -m polydriver
 
+[project.gui-scripts]
+polydriver-gui = "polydriver.gui:main"   # the window; same as python -m polydriver.gui
+
 [project.optional-dependencies]
 dev = [
     "pytest==9.1.1",
+    "pytest-qt==4.5.0",
 ]
 
 
@@ -30,6 +36,7 @@ testpaths = ["tests"]                   # legacy/ tests are never collected
 pythonpath = ["tests"]                  # tests/fakes.py, shared by the device tests
 addopts = ["-ra", "--strict-markers", "--strict-config", "--import-mode=importlib"]
 xfail_strict = true
+qt_api = "pyside6"
 filterwarnings = ["error"]
 markers = [
     "hardware: needs a real board on a COM port",

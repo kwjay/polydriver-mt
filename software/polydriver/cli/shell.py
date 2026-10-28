@@ -5,14 +5,13 @@ import argparse
 import logging
 import sys
 from collections.abc import Callable
-from dataclasses import replace
 from pathlib import Path
 from typing import TextIO
 
-from ..config import DEFAULT_CONFIG_PATH, Config, ConfigError, load_config
+from ..config import DEFAULT_CONFIG_PATH, ConfigError, load_config
 from ..devices import Link, Session
 from ..protocol.constants import Role
-from ..sim import SimBench, SimBoard
+from ..startup import log_to_file, simulate
 from .base import ShellBase
 from .board_commands import BoardCommands
 from .calibrate_commands import CalibrateCommands
@@ -20,9 +19,6 @@ from .dev_commands import DevCommands
 from .job_commands import JobCommands
 from .log_commands import LogCommands
 from .run_commands import RunCommands
-
-LOG_FILE_NAME = "polydriver.log"
-
 
 class Shell(BoardCommands, DevCommands, LogCommands, CalibrateCommands, JobCommands, RunCommands, ShellBase):
 	pass
@@ -51,9 +47,9 @@ def main(
 
 	sim_ports = None
 	if args.sim:
-		config, link_factory = _simulated(config)
+		config, link_factory = simulate(config)
 		sim_ports = config.ports
-	log_handler = _log_to_file(config)
+	log_handler = log_to_file(config)
 	session = Session(config, link_factory=link_factory or Link.open)
 	shell: Shell | None = None
 	try:
@@ -81,21 +77,3 @@ def main(
 		logging.getLogger().removeHandler(log_handler)
 		log_handler.close()
 
-
-def _simulated(config: Config) -> tuple[Config, Callable[[str], Link]]:
-	"""A SimBench on the config's ports, or on SIM-POLYMER and SIM-COLOUR where the config names none."""
-	defaults = {Role.POLYMER: SimBench.POLYMER_PORT, Role.COLOUR: SimBench.COLOUR_PORT}
-	ports = {role: config.ports.get(role) or port for role, port in defaults.items()}
-	bench = SimBench({ports[role]: SimBoard(role) for role in defaults})
-	return replace(config, ports=ports), bench.link_factory
-
-
-def _log_to_file(config: Config) -> logging.FileHandler:
-	folder = config.resolve(config.logging.folder)
-	folder.mkdir(parents=True, exist_ok=True)
-	handler = logging.FileHandler(folder / LOG_FILE_NAME, encoding="utf-8")
-	handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(threadName)s %(name)s: %(message)s"))
-	root = logging.getLogger()
-	root.addHandler(handler)
-	root.setLevel(logging.INFO)
-	return handler
