@@ -1,0 +1,31 @@
+{
+  "schema": 1,
+  "materials": [
+    {
+      "name": "MB-red",
+      "kind": "masterbatch",
+      "dispenser": "A",
+      "flow_min_g_s": null,
+      "flow_max_g_s": null,
+      "kp": null,
+      "ki": null,
+      "kd": null,
+      "ff_offset_duty": null,
+      "ff_gain_duty_per_hz": null,
+      "note": "simulated: the board's config gains are used"
+    },
+    {
+      "name": "PP",
+      "kind": "polymer",
+      "dispenser": "B",
+      "flow_min_g_s": null,
+      "flow_max_g_s": null,
+      "kp": null,
+      "ki": null,
+      "kd": null,
+      "ff_offset_duty": null,
+      "ff_gain_duty_per_hz": null,
+      "note": "simulated: the board's config gains are used"
+    }
+  ]
+}

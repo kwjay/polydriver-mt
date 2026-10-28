@@ -1,3 +1,4 @@
+import csv
 import json
 from dataclasses import replace
 
@@ -514,6 +515,48 @@ def test_a_stopped_run_logs_the_stop_and_aborted(rig):
 	side = json.loads(log.sidecar_path.read_text(encoding="utf-8"))
 	assert side["result"] == "ABORTED"
 	assert [entry["command"] for entry in side["fleet"]] == ["JOB_RUN", "STOP"]
+
+
+def last_logged_states(log):
+	with log.csv_path.open(encoding="utf-8", newline="") as file:
+		rows = list(csv.DictReader(file))
+	return {name: next(row[f"{name}_job_state"] for row in reversed(rows) if row[f"{name}_job_state"])
+			for name in ("polymer", "colour")}
+
+
+def slow_polls(rig):
+	"""2 Hz, so no ordinary poll is likely to land between the end of the run and the log's close."""
+	rig.session.reload_config(replace(rig.config, logging=replace(rig.config.logging, poll_hz=2.0)))
+
+
+def test_after_a_safety_abort_the_log_ends_with_both_boards_stopped(rig):
+	slow_polls(rig)
+	log = start_run_log(rig.session, rig.config)
+	runner = running(rig, run_log=log)
+	rig.link(Role.COLOUR).speed_factor = 0.5
+	assert runner.wait(5.0) is RunState.ABORTED
+	assert last_logged_states(log) == {"polymer": "ABORTED", "colour": "ABORTED"}
+
+
+def test_after_an_operator_stop_the_log_ends_with_both_boards_stopped(rig):
+	slow_polls(rig)
+	log = start_run_log(rig.session, rig.config)
+	runner = running(rig, run_log=log)
+	runner.stop()
+	assert runner.wait(2.0) is RunState.ABORTED
+	assert last_logged_states(log) == {"polymer": "ABORTED", "colour": "ABORTED"}
+
+
+def test_a_board_lost_at_the_end_does_not_keep_the_other_out_of_the_log(rig, caplog):
+	slow_polls(rig)
+	log = start_run_log(rig.session, rig.config)
+	runner = running(rig, run_log=log)
+	rig.link(Role.COLOUR).fail_with = LinkLostError("COM5 lost")
+	assert runner.wait(5.0) is RunState.ABORTED
+	assert last_logged_states(log)["polymer"] == "ABORTED"
+	assert json.loads(log.sidecar_path.read_text(encoding="utf-8"))["result"] == "ABORTED"
+	# The lost board is no longer connected, so the poll after the run leaves it out.
+	assert not [r for r in caplog.records if "the poll after the run failed" in r.getMessage()]
 
 
 def test_a_steps_job_runs_too(rig):

@@ -1,0 +1,41 @@
+{
+  "schema": 1,
+  "name": "Simulated 2 min PP red 1-5 % linear",
+  "created": "2026-10-28T09:00:00+01:00",
+  "modified": "2026-10-28T09:00:00+01:00",
+  "materials": {
+    "polymer": "PP",
+    "colour": "MB-red"
+  },
+  "calibration": {
+    "polymer": {
+      "dispenser": "B",
+      "material": "PP",
+      "hash": "a1b3140f83fdc9eeac2ef042ab034c9ae01868ed0418cd003e4f99402bf2741b"
+    },
+    "colour": {
+      "dispenser": "A",
+      "material": "MB-red",
+      "hash": "be434ac4b7de6b6aa70484a667f39edb6c308a9c4cbd6be8d2d4fc205af34171"
+    }
+  },
+  "amount": {
+    "duration_s": 120,
+    "total_mass_g": null,
+    "total_flow_g_s": 1.5
+  },
+  "profile": {
+    "phi_start": 0.01,
+    "phi_end": 0.05,
+    "curve": "linear",
+    "curve_params": {},
+    "hold_start_s": 10.0,
+    "hold_end_s": 10.0,
+    "table": null
+  },
+  "pid_override": null,
+  "run_defaults": {
+    "log": true,
+    "live_plot": true
+  }
+}

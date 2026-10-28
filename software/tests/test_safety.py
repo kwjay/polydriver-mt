@@ -176,6 +176,18 @@ def test_a_screw_spinning_up_is_no_stall():
 	assert w.on_status(Role.COLOUR, report(elapsed_ms=110, speed_hz=0.0, flags=STALLED), 100.0).warnings == ()
 
 
+def test_a_slow_spin_up_is_no_stall_until_the_encoder_has_measured_a_speed():
+	# After a stall the first edge clears the flag but measures nothing; starting slowly, the next
+	# edge can come more than 524 ms later, and the board flags a stall again.
+	w = watch()
+	w.on_status(Role.COLOUR, report(elapsed_ms=10, speed_hz=0.0, flags=STALLED), 100.0)
+	w.on_status(Role.COLOUR, report(elapsed_ms=300, speed_hz=0.0), 100.0)
+	assert w.on_status(Role.COLOUR, report(elapsed_ms=400, speed_hz=0.0, flags=STALLED), 100.0).warnings == ()
+	w.on_status(Role.COLOUR, report(elapsed_ms=900, speed_hz=3.0), 100.0)
+	assert w.on_status(Role.COLOUR, report(elapsed_ms=1500, speed_hz=0.0, flags=STALLED), 100.0).warnings == (
+		"the colour encoder stalled at 1.5 s with 20 Hz commanded",)
+
+
 def test_an_encoder_stall_is_a_warning_once_and_not_an_abort():
 	w = watch(tracking_s=3.0)
 	w.on_status(Role.COLOUR, report(elapsed_ms=500, speed_hz=20.0), 100.0)

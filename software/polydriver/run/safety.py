@@ -5,8 +5,9 @@ Abort when a board aborts its job or no longer runs it, when its link is lost or
 disconnected or restarts, when it sends no STATUS for longer than silence_s, when its speed stays
 off the commanded one for tracking_s of its job time, or when the job runs overtime_s past its
 total time. Below the speed the encoder measures (1.907 Hz) the speed is not judged. An encoder
-stall is a warning, once per stall, but only once the encoder has turned in this job (or since a
-stretch too slow to measure): a screw spinning up reads as stalled for a moment on every run. A stall
+stall is a warning, once per stall, but only once the encoder has measured a speed in this job (or
+since a stretch too slow to measure): a screw spinning up reads as stalled for a moment on every
+run, and on a slow start the first edge clears the flag before the second comes too late. A stall
 that lasts is a tracking error and is aborted as one, with or without the warning.
 """
 
@@ -65,8 +66,8 @@ class SafetyWatch:
 		self._deadline_s = started_s + self._total_s + limits.overtime_s
 		self._last_status_s = {role: started_s for role in ROLES}
 		self._off_since_ms: dict[Role, int | None] = {role: None for role in ROLES}
-		# True until the encoder is seen turning: the screws stand when the job starts.
-		self._stalled = {role: True for role in ROLES}
+		# Turning once the encoder has measured a speed; the screws stand when the job starts.
+		self._turning = {role: False for role in ROLES}
 		self._done: set[Role] = set()
 
 	def on_status(self, role: Role, report: StatusReport, host_time_s: float) -> Verdict:
@@ -83,13 +84,14 @@ class SafetyWatch:
 
 		commanded = speed_at(self._segments[role], elapsed_ms)
 		if commanded < MIN_MEASURABLE_SPEED_HZ:
-			self._off_since_ms[role], self._stalled[role] = None, True
+			self._off_since_ms[role], self._turning[role] = None, False
 			return Verdict()
 		warnings = ()
 		stalled = StatusFlag.ENCODER_STALLED in report.flags
-		if stalled and not self._stalled[role]:
+		if stalled and self._turning[role]:
 			warnings = (f"the {name} encoder stalled at {elapsed_ms / 1000:g} s with {commanded:.3g} Hz commanded",)
-		self._stalled[role] = stalled
+		# The board reads 0 Hz while stalled, and after a stall until its second edge.
+		self._turning[role] = report.raw_speed_hz > 0
 
 		measured = report.filtered_speed_hz
 		limits = self._limits

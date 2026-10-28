@@ -362,6 +362,7 @@ class Runner:
 			if self._stop_at_end:
 				self._log_command(self._fleet.stop())
 			self._session.remove_sink(self)
+			self._poll_boards()
 			self._restore_settings()
 			if self._log is not None:
 				with self._lock:
@@ -386,12 +387,22 @@ class Runner:
 				self._session.apply_settings(role, settings)
 				self._own_settings.add(role)
 
-	def _restore_settings(self) -> None:
-		"""The config's settings back on the boards that had their material's. Polled first, so the
-		session sees the job has ended."""
-		for role in sorted(self._own_settings):
+	def _poll_boards(self) -> None:
+		"""One poll of each connected board after the run, so the run log ends with the state the run
+		left them in (STOPped ones ABORTED) and the session sees the job has ended."""
+		connected = self._session.roles()
+		for role in ROLES:
+			if role not in connected:
+				continue
 			try:
 				self._session.poll_now(role)
+			except Exception as error:
+				logger.warning("%s board: the poll after the run failed: %s", _name(role), error)
+
+	def _restore_settings(self) -> None:
+		"""The config's settings back on the boards that had their material's."""
+		for role in sorted(self._own_settings):
+			try:
 				self._session.apply_settings(role)
 			except Exception as error:
 				logger.warning("%s board: putting the config's settings back failed: %s", _name(role), error)

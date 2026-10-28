@@ -1,0 +1,36 @@
+# The setup for two simulated boards (polydriver.sim): the end-to-end run of C8.6.
+#
+#   python -m polydriver.sim.end_to_end examples/simulated/jobs/two-minute-gradient.json
+#   python -m polydriver.sim.end_to_end examples/simulated/jobs/two-minute-gradient.json --fault colour:jam@40
+#
+# The ports are not used: the simulated boards are found by role. The gains suit the simulated
+# motor (as on the simavr bridge), not a real screw. The logs land in logs/ next to this file.
+
+[safety]
+comms_timeout_s = 2.0
+
+[board.polymer]
+kp = 0.5
+ki = 2.0
+kd = 0.0
+alpha = 0.5
+ff_offset_duty = 128.0
+ff_gain_duty_per_hz = 1.67
+
+[board.colour]
+kp = 0.5
+ki = 2.0
+kd = 0.0
+alpha = 0.5
+ff_offset_duty = 128.0
+ff_gain_duty_per_hz = 1.67
+
+[logging]
+enabled = true
+folder = "logs"
+poll_hz = 10.0
+
+[paths]
+jobs = "jobs"
+calibration = "calibration.json"
+materials = "materials.json"

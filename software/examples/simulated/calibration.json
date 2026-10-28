@@ -1,0 +1,115 @@
+{
+  "schema": 2,
+  "curves": [
+    {
+      "dispenser": "A",
+      "material": "MB-red",
+      "hash": "be434ac4b7de6b6aa70484a667f39edb6c308a9c4cbd6be8d2d4fc205af34171",
+      "measurements": [
+        {
+          "speed_hz": 2.0,
+          "grams": 1.0,
+          "duration_s": 100.0,
+          "taken_at": "2026-10-28T09:00:00+01:00",
+          "method": "steady-state",
+          "note": "invented for the simulated boards (polydriver.sim); not a measurement"
+        },
+        {
+          "speed_hz": 2.0,
+          "grams": 1.0,
+          "duration_s": 100.0,
+          "taken_at": "2026-10-28T09:00:00+01:00",
+          "method": "steady-state",
+          "note": "invented for the simulated boards (polydriver.sim); not a measurement"
+        },
+        {
+          "speed_hz": 5.0,
+          "grams": 3.0,
+          "duration_s": 100.0,
+          "taken_at": "2026-10-28T09:00:00+01:00",
+          "method": "steady-state",
+          "note": "invented for the simulated boards (polydriver.sim); not a measurement"
+        },
+        {
+          "speed_hz": 5.0,
+          "grams": 3.0,
+          "duration_s": 100.0,
+          "taken_at": "2026-10-28T09:00:00+01:00",
+          "method": "steady-state",
+          "note": "invented for the simulated boards (polydriver.sim); not a measurement"
+        },
+        {
+          "speed_hz": 8.0,
+          "grams": 5.0,
+          "duration_s": 100.0,
+          "taken_at": "2026-10-28T09:00:00+01:00",
+          "method": "steady-state",
+          "note": "invented for the simulated boards (polydriver.sim); not a measurement"
+        },
+        {
+          "speed_hz": 8.0,
+          "grams": 5.0,
+          "duration_s": 100.0,
+          "taken_at": "2026-10-28T09:00:00+01:00",
+          "method": "steady-state",
+          "note": "invented for the simulated boards (polydriver.sim); not a measurement"
+        },
+        {
+          "speed_hz": 15.0,
+          "grams": 9.0,
+          "duration_s": 100.0,
+          "taken_at": "2026-10-28T09:00:00+01:00",
+          "method": "steady-state",
+          "note": "invented for the simulated boards (polydriver.sim); not a measurement"
+        },
+        {
+          "speed_hz": 15.0,
+          "grams": 9.0,
+          "duration_s": 100.0,
+          "taken_at": "2026-10-28T09:00:00+01:00",
+          "method": "steady-state",
+          "note": "invented for the simulated boards (polydriver.sim); not a measurement"
+        }
+      ]
+    },
+    {
+      "dispenser": "B",
+      "material": "PP",
+      "hash": "a1b3140f83fdc9eeac2ef042ab034c9ae01868ed0418cd003e4f99402bf2741b",
+      "measurements": [
+        {
+          "speed_hz": 10.0,
+          "grams": 4.0,
+          "duration_s": 10.0,
+          "taken_at": "2026-10-28T09:00:00+01:00",
+          "method": "steady-state",
+          "note": "invented for the simulated boards (polydriver.sim); not a measurement"
+        },
+        {
+          "speed_hz": 20.0,
+          "grams": 11.0,
+          "duration_s": 10.0,
+          "taken_at": "2026-10-28T09:00:00+01:00",
+          "method": "steady-state",
+          "note": "invented for the simulated boards (polydriver.sim); not a measurement"
+        },
+        {
+          "speed_hz": 30.0,
+          "grams": 14.5,
+          "duration_s": 10.0,
+          "taken_at": "2026-10-28T09:00:00+01:00",
+          "method": "steady-state",
+          "note": "invented for the simulated boards (polydriver.sim); not a measurement"
+        },
+        {
+          "speed_hz": 40.0,
+          "grams": 20.0,
+          "duration_s": 10.0,
+          "taken_at": "2026-10-28T09:00:00+01:00",
+          "method": "steady-state",
+          "note": "invented for the simulated boards (polydriver.sim); not a measurement"
+        }
+      ]
+    }
+  ]
+}
