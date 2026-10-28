@@ -6,6 +6,7 @@ in the log. A shell that died would leave the motors running until the comms tim
 """
 
 import cmd
+import inspect
 import logging
 import sys
 import threading
@@ -14,6 +15,7 @@ from collections.abc import Callable, Iterable
 from pathlib import Path
 from typing import TextIO
 
+from ..calibration import CalibrationError
 from ..config import Config, ConfigError
 from ..devices import DeviceError, Event, EventKind, NotConnectedError, SessionLike
 from ..protocol.constants import NackReason, Role
@@ -59,7 +61,7 @@ def describe(error: BaseException, role: Role | None = None) -> str | None:
 		return f"{error} (`ports` lists the ports; is another program holding it open?)"
 	if isinstance(error, (LinkError, QueueStateError)):
 		return f"link lost: {error}"
-	if isinstance(error, (DeviceError, RequestError, ConfigError, RunLogError, OSError)):
+	if isinstance(error, (DeviceError, RequestError, ConfigError, RunLogError, CalibrationError, OSError)):
 		return str(error)
 	return None
 
@@ -103,6 +105,14 @@ class ShellBase(cmd.Cmd):
 
 	def get_names(self) -> list[str]:
 		return [name for name in super().get_names() if name not in ("do_EOF", "do_exit")]
+
+	def do_help(self, arg: str) -> None:
+		"""help [COMMAND]  - list the commands, or explain one"""
+		method = getattr(self, f"do_{arg.strip()}", None) if arg.strip() else None
+		if method is None or not method.__doc__:
+			super().do_help(arg)
+			return
+		self.say(inspect.cleandoc(method.__doc__))
 
 	def emptyline(self) -> bool:
 		return False

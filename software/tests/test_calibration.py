@@ -4,8 +4,8 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from polydriver.calibration import (
-	SCHEMA, CalibrationError, CalibrationFileError, CalibrationStore, Curve, Measurement, UnknownCurveError,
-	load_calibration, save_calibration,
+	SCHEMA, CalibrationError, CalibrationFileError, CalibrationStore, Curve, Measurement, OldCalibrationFileError,
+	UnknownCurveError, load_calibration, save_calibration,
 )
 
 T0 = datetime(2026, 10, 26, 14, 0, tzinfo=timezone(timedelta(hours=1)))
@@ -302,8 +302,9 @@ OLD_FILE = {"targets": {"1": {"measurements": [
 def test_an_old_file_needs_its_material_named(tmp_path):
 	path = tmp_path / "calibration.json"
 	path.write_text(json.dumps(OLD_FILE), encoding="utf-8")
-	with pytest.raises(CalibrationFileError, match="old calibration file.*material"):
+	with pytest.raises(OldCalibrationFileError, match="old calibration file.*material"):
 		load_calibration(path)
+	assert issubclass(OldCalibrationFileError, CalibrationFileError)
 
 
 def test_an_old_file_loads_once_its_material_is_named(tmp_path):

@@ -82,6 +82,22 @@ def test_help_lists_the_board_commands(shell):
 	assert "EOF" not in text
 
 
+def test_help_on_one_command_has_no_source_indentation(shell):
+	lines = run(shell, "help log").splitlines()
+	assert lines[0].startswith("log [on [NOTE]")
+	assert any(line.startswith("log on [NOTE]  - start a run log") for line in lines)
+	assert not [line for line in lines if line.startswith(("\t", " "))]
+
+
+def test_help_on_an_unknown_command_says_so(shell):
+	assert "No help on frobnicate" in run(shell, "help frobnicate")
+
+
+def test_help_on_a_command_without_help_text_says_so(shell):
+	shell.do_nodoc = lambda arg: None
+	assert "No help on nodoc" in run(shell, "help nodoc")
+
+
 def test_a_bug_in_a_command_is_reported_and_the_shell_goes_on(shell, boards):
 	run(shell, "connect polymer")
 	boards.links["COM6"].fail_with = RuntimeError("bug in the code")

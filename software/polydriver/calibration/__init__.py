@@ -1,6 +1,6 @@
 from .data import (
-	DEFAULT_METHOD, SCHEMA, CalibrationError, CalibrationFileError, CalibrationStore, Curve, Measurement, Point,
-	UnknownCurveError, load_calibration, save_calibration,
+	DEFAULT_METHOD, SCHEMA, CalibrationError, CalibrationFileError, CalibrationStore, Curve, Measurement,
+	OldCalibrationFileError, Point, UnknownCurveError, load_calibration, save_calibration,
 )
 from .fit import SPREAD_LIMIT, FitReport, Residual, fit_report, format_fit_report
 from .lookup import (
@@ -19,6 +19,7 @@ __all__ = [
 	"Measurement",
 	"NonMonotonicError",
 	"NotEnoughPointsError",
+	"OldCalibrationFileError",
 	"OutOfRangeError",
 	"Point",
 	"Residual",

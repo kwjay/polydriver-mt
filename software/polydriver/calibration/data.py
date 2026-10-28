@@ -36,6 +36,10 @@ class CalibrationFileError(CalibrationError):
 	pass
 
 
+class OldCalibrationFileError(CalibrationFileError):
+	"""An old file (one board, no materials) read without naming its material."""
+
+
 @dataclass(frozen=True)
 class Measurement:
 	"""One weighing: the screw held at speed_hz for duration_s gave grams. taken_at is ISO 8601 with
@@ -256,7 +260,7 @@ def load_calibration(path: Path, *, old_material: str | None = None,
 def _load_old(path: Path, data: dict, store: CalibrationStore, material: str | None,
 			dispensers: Mapping[int, str]) -> None:
 	if material is None:
-		raise CalibrationFileError(
+		raise OldCalibrationFileError(
 			f"{path}: an old calibration file (one board, no materials); load it again with the material it was "
 			"measured with"
 		)

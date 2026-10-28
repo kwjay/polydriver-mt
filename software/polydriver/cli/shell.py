@@ -12,13 +12,14 @@ from ..config import DEFAULT_CONFIG_PATH, Config, ConfigError, load_config
 from ..devices import Link, Session
 from .base import ShellBase
 from .board_commands import BoardCommands
+from .calibrate_commands import CalibrateCommands
 from .dev_commands import DevCommands
 from .log_commands import LogCommands
 
 LOG_FILE_NAME = "polydriver.log"
 
 
-class Shell(BoardCommands, DevCommands, LogCommands, ShellBase):
+class Shell(BoardCommands, DevCommands, LogCommands, CalibrateCommands, ShellBase):
 	pass
 
 
