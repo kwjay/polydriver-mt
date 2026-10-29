@@ -1,21 +1,25 @@
 """Manual: test one board's speed loop. Send PID gains, filter alpha and feedforward; drive the screw
 at a speed (closed loop) or a duty (open loop); STOP; watch target, raw and filtered speed and the
-duty live; record the polls to a run log (CSV + sidecar) for later analysis.
+duty live; record the polls to a run log (CSV + sidecar) for later analysis; save the settings to the
+config file. The Sweep and Step test tabs (gui.tuning) measure the feedforward and the loop.
 
 The target line is what the board reports in SETTINGS after each command, not what was typed."""
 
 import math
 from collections import deque
+from dataclasses import replace
+from pathlib import Path
 
 import pyqtgraph as pg
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
-	QComboBox, QDoubleSpinBox, QFormLayout, QGroupBox, QHBoxLayout, QLabel, QPushButton, QSpinBox, QVBoxLayout,
-	QWidget,
+	QComboBox, QDoubleSpinBox, QFormLayout, QGroupBox, QHBoxLayout, QLabel, QPushButton, QSpinBox, QTabWidget,
+	QVBoxLayout, QWidget,
 )
 
 from ..cli.board_commands import flag_names, settings_text
-from ..config import BoardSettings, Config
+from ..bench import run_step_test, run_sweep
+from ..config import BoardSettings, Config, save_board_settings
 from ..devices import BoardStatus
 from ..protocol.constants import Mode, Role
 from ..requests import SettingsReport
@@ -23,6 +27,7 @@ from ..telemetry import start_run_log
 from .bridge import Bridge
 from .messages import error_text, role_title
 from .telemetry import QtSink
+from .tuning import StepTestPanel, SweepPanel
 
 ROLES = (Role.POLYMER, Role.COLOUR)
 WINDOW_S = 30.0
@@ -70,9 +75,12 @@ def _spin(minimum: float, maximum: float, decimals: int, step: float) -> QDouble
 
 
 class ManualPage(QWidget):
-	def __init__(self, session, config: Config, bridge: Bridge, sink: QtSink, *, start_log=start_run_log):
+	def __init__(self, session, config: Config, bridge: Bridge, sink: QtSink, *, start_log=start_run_log,
+				config_path: Path | None = None, sweep=run_sweep, step_test=run_step_test):
+		"""config_path: the file "Save to config" writes; None hides the button."""
 		super().__init__()
-		self._start_log = start_log
+		self.start_log = start_log
+		self.config_path = config_path
 		self.session = session
 		self.config = config
 		self.bridge = bridge
@@ -94,6 +102,9 @@ class ManualPage(QWidget):
 		self.ff_gain = _spin(0.0, 255.0, 3, 0.1)
 		self.send_button = QPushButton("Send to board")
 		self.read_button = QPushButton("Read from board")
+		self.save_button = QPushButton("Save to config")
+		self.save_button.setToolTip("Write these settings for this board into the config file (its comments are lost)")
+		self.save_button.setVisible(config_path is not None)
 		self.board_label = QLabel("")
 		self.board_label.setWordWrap(True)
 
@@ -111,6 +122,9 @@ class ManualPage(QWidget):
 		self.message_label = QLabel("")
 		self.message_label.setStyleSheet("color: #c62828;")
 		self.message_label.setWordWrap(True)
+		self.note_label = QLabel("")
+		self.note_label.setStyleSheet("color: palette(dark);")
+		self.note_label.setWordWrap(True)
 
 		self.readout_label = QLabel("")
 		self.record_button = QPushButton("Record CSV")
@@ -128,10 +142,18 @@ class ManualPage(QWidget):
 						for name in ("target", "raw", "filtered")}
 		self.curves["duty"] = self.duty_plot.plot([], [], pen=PENS["duty"], name="duty")
 
+		self.sweep_panel = SweepPanel(self, run=sweep)
+		self.step_panel = StepTestPanel(self, run=step_test)
+		self.procedures = (self.sweep_panel, self.step_panel)
+		self.tabs = QTabWidget()
+
 		self._lay_out()
 		self.role_combo.currentIndexChanged.connect(lambda _: self.select_role(self.role_combo.currentData()))
 		self.send_button.clicked.connect(self.send_settings)
 		self.read_button.clicked.connect(self.read_settings)
+		self.save_button.clicked.connect(self.save_settings)
+		for panel in self.procedures:
+			panel.running_changed.connect(self._procedure_running)
 		self.speed_button.clicked.connect(lambda: self._command(f"speed {self.speed.value():g} Hz",
 																lambda board, hz=self.speed.value(): board.set_speed(hz)))
 		self.duty_button.clicked.connect(lambda: self._command(f"duty {self.duty.value()}",
@@ -157,10 +179,11 @@ class ManualPage(QWidget):
 		buttons = QHBoxLayout()
 		buttons.addWidget(self.send_button)
 		buttons.addWidget(self.read_button)
+		buttons.addWidget(self.save_button)
 		form.addRow(buttons)
 		form.addRow(self.board_label)
 
-		drive = QGroupBox("Drive")
+		drive = QWidget()
 		drive_layout = QFormLayout(drive)
 		modes = QHBoxLayout()
 		modes.addWidget(self.closed_loop_button)
@@ -175,7 +198,9 @@ class ManualPage(QWidget):
 		duty_row.addWidget(self.duty_button)
 		drive_layout.addRow("duty (open loop)", duty_row)
 		drive_layout.addRow(self.mode_label)
-		drive_layout.addRow(self.stop_button)
+		self.tabs.addTab(drive, "Drive")
+		self.tabs.addTab(self.sweep_panel, "Sweep")
+		self.tabs.addTab(self.step_panel, "Step test")
 
 		record = QHBoxLayout()
 		record.addWidget(self.record_button)
@@ -184,9 +209,10 @@ class ManualPage(QWidget):
 		left = QVBoxLayout()
 		left.addWidget(self.role_combo)
 		left.addWidget(settings)
-		left.addWidget(drive)
+		left.addWidget(self.tabs, 1)
+		left.addWidget(self.stop_button)
 		left.addWidget(self.message_label)
-		left.addStretch(1)
+		left.addWidget(self.note_label)
 		left.addLayout(record)
 		right = QVBoxLayout()
 		right.addWidget(self.readout_label)
@@ -226,6 +252,20 @@ class ManualPage(QWidget):
 						on_result=lambda report: self._read_into_form(role, report),
 						on_error=lambda error: self._show_error("read settings", error, role))
 
+	def save_settings(self) -> None:
+		role, settings, path = self.role, self.form_values(), self.config_path
+		self._clear_message()
+		self.bridge.run(save_board_settings, path, role, settings, name=f"save {role.name.lower()} settings",
+						on_result=lambda _: self._saved(role, settings, path),
+						on_error=lambda error: self._show_error("save settings", error, role))
+
+	def _saved(self, role: Role, settings: BoardSettings, path: Path) -> None:
+		self.config = replace(self.config, boards={**self.config.boards, role: settings})
+		self.show_note(f"saved the {role.name.lower()} settings to {path} (comments in that file are not kept)")
+
+	def show_note(self, text: str) -> None:
+		self.note_label.setText(text)
+
 	def _fill_form(self, settings: BoardSettings) -> None:
 		self.kp.setValue(settings.kp or 0.0)
 		self.ki.setValue(settings.ki or 0.0)
@@ -245,9 +285,28 @@ class ManualPage(QWidget):
 
 	def stop_board(self) -> None:
 		role = self.role
-		self.bridge.run_now(self._on_board, role, lambda board: board.stop(), name=f"stop {role.name.lower()}",
+
+		def stop(board) -> None:
+			self.cancel_procedures()
+			board.stop()
+
+		self.bridge.run_now(self._on_board, role, stop, name=f"stop {role.name.lower()}",
 							on_result=lambda report: self._show_settings(role, report),
 							on_error=lambda error: self._show_error("stop", error, role))
+
+	def cancel_procedures(self) -> None:
+		"""Before any STOP: a sweep or step test sends nothing after this returns. Thread-safe; may wait
+		for one request in flight, so call it off the GUI thread."""
+		for panel in self.procedures:
+			panel.cancel()
+
+	def _procedure_running(self, running: bool) -> None:
+		for widget in (self.role_combo, self.send_button, self.speed_button, self.duty_button,
+						self.closed_loop_button, self.open_loop_button):
+			widget.setEnabled(not running)
+		for panel in self.procedures:
+			if not panel.running:
+				panel.run_button.setEnabled(not running)
 
 	def on_stopped(self) -> None:
 		"""Every board was sent STOP (the window's STOP)."""
@@ -314,7 +373,7 @@ class ManualPage(QWidget):
 	def toggle_recording(self) -> None:
 		if self.log is None:
 			self.record_button.setEnabled(False)
-			self.bridge.run(self._start_log, self.session, self.config, note="PID test", name="start recording",
+			self.bridge.run(self.start_log, self.session, self.config, note="PID test", name="start recording",
 							on_result=self._recording, on_error=self._recording_failed)
 		else:
 			log, self.log = self.log, None
@@ -324,6 +383,7 @@ class ManualPage(QWidget):
 
 	def shutdown(self) -> None:
 		"""After the window closed and the boards got STOP: closes a recording still open."""
+		self.cancel_procedures()
 		if self.log is not None:
 			log, self.log = self.log, None
 			log.close()

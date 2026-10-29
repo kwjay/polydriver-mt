@@ -152,3 +152,38 @@ def test_a_recording_still_open_is_closed_after_the_boards_got_stop(qtbot, tmp_p
 
 	main(["--sim", "--config", str(write_config(tmp_path))], run=run)
 	assert order == ["log closed"]
+
+
+def test_save_to_config_writes_the_file_given_with_config(qtbot, tmp_path):
+	path = write_config(tmp_path)
+	paths = []
+	main(["--sim", "--config", str(path)], run=lambda window: paths.append(window.screen("Manual").config_path) or 0)
+	assert paths == [path]
+
+
+def test_the_window_stop_cancels_a_procedure_before_it_sends_stop(qtbot, tmp_path, sessions):
+	order = []
+
+	def run(window):
+		manual = window.screen("Manual")
+		manual.cancel_procedures = lambda: order.append("cancelled")
+		real_stop_all = sessions[0].stop_all
+		sessions[0].stop_all = lambda: (order.append("stop"), real_stop_all())[1]
+		with qtbot.waitSignal(window.stopped, timeout=3000):
+			window.stop_everything()
+		return 0
+
+	main(["--sim", "--config", str(write_config(tmp_path))], run=run)
+	assert order[:2] == ["cancelled", "stop"]
+
+
+def test_closing_the_window_cancels_procedures_before_the_boards_get_stop(qtbot, tmp_path, sessions):
+	order = []
+
+	def run(window):
+		window.screen("Manual").cancel_procedures = lambda: order.append(
+			"cancelled after STOP" if sessions[0].closed else "cancelled")
+		return 0
+
+	main(["--sim", "--config", str(write_config(tmp_path))], run=run)
+	assert order[0] == "cancelled"

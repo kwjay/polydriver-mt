@@ -4,7 +4,7 @@ record what they were asked, and refuse what a test tells them to."""
 import threading
 import time
 
-from polydriver.devices import BoardState, BoardStatus, Event, EventKind, NotConnectedError
+from polydriver.devices import BoardState, BoardStatus, Event, EventKind, LinkCounters, NotConnectedError
 from polydriver.protocol.constants import JobState, Mode, Role, StatusFlag
 from polydriver.requests import SettingsReport, StatusReport, VersionReport
 
@@ -24,9 +24,17 @@ def make_event(kind=EventKind.LINK_LOST, role=Role.POLYMER, message="COM6 lost",
 	return Event(kind=kind, role=role, message=message, host_time_s=host_time_s)
 
 
+class FakeLink:
+	def __init__(self):
+		self.stats = LinkCounters(frames_sent=120, retries=2, reply_timeouts=1, late_replies=0, nacks={},
+									host_bad_crc_frames=0, host_abandoned_frames=0)
+
+
 class FakeBoard:
 	def __init__(self):
 		self.calls = []
+		self.link = FakeLink()
+		self.stored_role = None
 		self.refuse = {}
 		self.kp, self.ki, self.kd = 0.5, 2.0, 0.0
 		self.alpha = 0.5
@@ -54,6 +62,10 @@ class FakeBoard:
 		self.target_speed_hz = 0.0
 		self.duty = 0
 
+	def set_role(self, role):
+		self._command("set_role", role)
+		self.stored_role = role
+
 	def stop(self):
 		self._command("stop")
 		self.target_speed_hz = 0.0
@@ -74,6 +86,7 @@ class FakeSession:
 		self.refuse = {}
 		self.sinks = []
 		self.connect_delay_s = 0.0
+		self.ports = {}
 		self.lock = threading.Lock()
 
 	def connect(self, role, port=None):
@@ -84,8 +97,18 @@ class FakeSession:
 			raise self.refuse[("connect", role)]
 		board = FakeBoard()
 		self.boards[role] = board
-		return BoardState(role=role, port=port or f"COM{role.value}", connected=True, version=VERSION,
-						settings=board.settings())
+		self.ports[role] = port or f"COM{role.value}"
+		return self.state(role)
+
+	def state(self, role):
+		board = self.board(role)
+		return BoardState(role=role, port=self.ports[role], connected=True, version=VERSION, settings=board.settings(),
+						polls=42, poll_failures=1, device_restarts=0)
+
+	def poll_now(self, role):
+		self.board(role)
+		self.calls.append(("poll_now", role))
+		return make_status()
 
 	def disconnect(self, role):
 		self.calls.append(("disconnect", role))

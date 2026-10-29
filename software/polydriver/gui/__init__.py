@@ -41,8 +41,9 @@ def main(
 						help="two simulated boards on the config's ports instead of the serial ports (polydriver.sim)")
 	args = parser.parse_args(argv)
 	app = QApplication.instance() or QApplication(sys.argv[:1])
+	config_path = Path(args.config)
 	try:
-		config = load_config(Path(args.config))
+		config = load_config(config_path)
 	except ConfigError as error:
 		(report or _message_box)(str(error))
 		return 2
@@ -63,15 +64,21 @@ def main(
 		sink = QtSink()
 		session.add_sink(sink)
 		devices = DevicesPage(session, config, bridge, sink, list_ports=list_ports)
-		manual = ManualPage(session, config, bridge, sink)
-		window = MainWindow(bridge, title=title, screens={"Devices": devices, "Manual": manual},
-							stop_all=session.stop_all)
+		manual = ManualPage(session, config, bridge, sink, config_path=config_path)
+
+		def stop_all():
+			manual.cancel_procedures()
+			return session.stop_all()
+
+		window = MainWindow(bridge, title=title, screens={"Devices": devices, "Manual": manual}, stop_all=stop_all)
 		window.stopped.connect(manual.on_stopped)
 		window.show()
 		return run(window) if run is not None else app.exec()
 	finally:
 		if window is not None:
 			window.close()
+		if manual is not None:
+			manual.cancel_procedures()
 		bridge.close(CLOSE_WAIT_S)
 		session.close()
 		if manual is not None:

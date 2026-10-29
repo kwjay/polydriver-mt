@@ -314,6 +314,17 @@ def save_config(config: Config, path: Path) -> None:
 	Path(path).write_text(tomli_w.dumps(data), encoding="utf-8")
 
 
+def save_board_settings(path: Path, role: Role, settings: BoardSettings) -> Config:
+	"""Reads the file again (a missing one gives the defaults), replaces one board's settings and
+	writes it back with save_config, so comments in the file are lost. The file is read fresh, not
+	taken from the running program, so what the program changed in memory (the simulated ports of
+	--sim) never reaches it. A broken file raises ConfigError and is left as it is."""
+	config = load_config(Path(path))
+	updated = replace(config, boards={**config.boards, role: settings})
+	save_config(updated, path)
+	return updated
+
+
 def write_default_config(path: Path = DEFAULT_CONFIG_PATH) -> None:
 	path = Path(path)
 	if path.exists():

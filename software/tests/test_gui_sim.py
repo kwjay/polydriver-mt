@@ -104,3 +104,62 @@ def test_a_recording_writes_a_run_log(qtbot, tmp_path):
 	assert len(logs) == 1
 	assert len(logs[0].read_text(encoding="utf-8").splitlines()) > 10
 	assert logs[0].with_suffix(".json").exists()
+
+
+def test_a_sweep_from_the_window_fits_the_simulated_motor(qtbot, tmp_path):
+	fits = []
+
+	def run(window):
+		connect_both(qtbot, window)
+		panel = window.screen("Manual").sweep_panel
+		panel.from_duty.setValue(140)
+		panel.to_duty.setValue(200)
+		panel.step_duty.setValue(20)
+		panel.hold.setValue(1.2)
+		click(qtbot, panel.run_button)
+		qtbot.waitUntil(lambda: not panel.running and panel.result_label.text() != "", timeout=20000)
+		fits.append((panel.fit, panel.result_label.text()))
+		return 0
+
+	main(["--sim", "--config", str(write_config(tmp_path))], run=run)
+	fit, text = fits[0]
+	assert fit is not None, text
+	assert abs(fit.ff_offset_duty - 128) < 6 and abs(fit.ff_gain_duty_per_hz - 1 / 0.6) < 0.2
+	assert len(list((tmp_path / "logs").glob("sweep-polymer-*.csv"))) == 1
+
+
+def test_a_step_test_from_the_window_fills_its_table_and_saves(qtbot, tmp_path):
+	rows = []
+
+	def run(window):
+		connect_both(qtbot, window)
+		panel = window.screen("Manual").step_panel
+		panel.steps.setText("0, 8")
+		panel.hold.setValue(3.0)
+		click(qtbot, panel.run_button)
+		qtbot.waitUntil(lambda: not panel.running and panel.status_label.text().startswith("saved"), timeout=20000)
+		rows.extend(panel.rows())
+		return 0
+
+	main(["--sim", "--config", str(write_config(tmp_path))], run=run)
+	assert rows[0][0] == "0 → 8" and rows[0][1] != "—"
+	assert len(list((tmp_path / "logs").glob("run-*-steps.csv"))) == 1
+
+
+def test_store_role_and_link_counters_work_on_a_simulated_board(qtbot, tmp_path):
+	notes = []
+
+	def run(window):
+		devices = connect_both(qtbot, window)
+		panel = devices.panels[Role.COLOUR]
+		click(qtbot, panel.store_role_button)
+		qtbot.waitUntil(lambda: panel.note_label.text().startswith("stored"), timeout=5000)
+		notes.append(panel.note_label.text())
+		click(qtbot, panel.counters_button)
+		qtbot.waitUntil(lambda: panel.note_label.text().startswith("PC:"), timeout=5000)
+		notes.append(panel.note_label.text())
+		return 0
+
+	main(["--sim", "--config", str(write_config(tmp_path))], run=run)
+	assert notes[0] == "stored the colour role on SIM-COLOUR: a swapped port is caught from now on"
+	assert "retries" in notes[1] and "board: dropped 0, bad CRC 0" in notes[1]

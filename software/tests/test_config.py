@@ -231,3 +231,35 @@ def test_board_settings_check_their_own_values():
 		BoardSettings(kp=1.0)
 	with pytest.raises(ValueError):
 		BoardSettings(kp=math.inf, ki=0.0, kd=0.0)
+
+
+# --- Saving one board's settings (the GUI's "Save to config") ------------------------------------
+
+def test_save_board_settings_changes_only_that_board(tmp_path):
+	from polydriver.config import save_board_settings
+	path = tmp_path / "polydriver.toml"
+	path.write_text('[ports]\npolymer = "COM6"\n\n[board.colour]\nalpha = 0.8\n\n[logging]\npoll_hz = 20.0\n',
+					encoding="utf-8")
+	new = BoardSettings(kp=0.7, ki=1.5, kd=0.0, alpha=0.4, ff_offset_duty=130.0, ff_gain_duty_per_hz=1.6)
+	saved = save_board_settings(path, Role.POLYMER, new)
+	again = load_config(path)
+	assert again.boards[Role.POLYMER] == new == saved.boards[Role.POLYMER]
+	assert again.boards[Role.COLOUR] == BoardSettings(alpha=0.8)
+	assert again.ports[Role.POLYMER] == "COM6"
+	assert again.logging.poll_hz == 20.0
+
+
+def test_save_board_settings_creates_a_missing_file(tmp_path):
+	from polydriver.config import save_board_settings
+	path = tmp_path / "new.toml"
+	save_board_settings(path, Role.COLOUR, BoardSettings(kp=1.0, ki=0.0, kd=0.0))
+	assert load_config(path).boards[Role.COLOUR].kp == 1.0
+
+
+def test_save_board_settings_refuses_a_broken_file_and_leaves_it(tmp_path):
+	from polydriver.config import save_board_settings
+	path = tmp_path / "polydriver.toml"
+	path.write_text("[ports\n", encoding="utf-8")
+	with pytest.raises(ConfigError):
+		save_board_settings(path, Role.POLYMER, BoardSettings())
+	assert path.read_text(encoding="utf-8") == "[ports\n"

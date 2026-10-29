@@ -244,3 +244,50 @@ def test_the_event_list_keeps_the_latest_lines(qtbot, page, sink):
 	qtbot.waitUntil(lambda: f"line {page.MAX_EVENT_LINES + 19}" in page.events_text(), timeout=2000)
 	assert page.events_text().count("\n") == page.MAX_EVENT_LINES - 1
 	assert "line 19\n" not in page.events_text()
+
+
+# --- Store role and link counters ---------------------------------------------------------------
+
+def test_store_role_and_counters_need_a_connected_board(page):
+	panel = page.panels[Role.POLYMER]
+	assert not panel.store_role_button.isEnabled()
+	assert not panel.counters_button.isEnabled()
+
+
+def test_store_role_stores_the_panels_role_on_its_board(qtbot, page, session, bridge):
+	connect(qtbot, page, Role.COLOUR)
+	panel = page.panels[Role.COLOUR]
+	assert panel.store_role_button.isEnabled()
+	click(qtbot, panel.store_role_button)
+	qtbot.waitUntil(lambda: panel.note_label.text() != "", timeout=2000)
+	assert session.boards[Role.COLOUR].stored_role is Role.COLOUR
+	assert panel.note_label.text() == "stored the colour role on COM5: a swapped port is caught from now on"
+
+
+def test_a_role_that_cannot_be_stored_says_why(qtbot, page, session, bridge):
+	connect(qtbot, page, Role.POLYMER)
+	session.boards[Role.POLYMER].refuse["set_role"] = OSError("COM6 lost")
+	panel = page.panels[Role.POLYMER]
+	click(qtbot, panel.store_role_button)
+	qtbot.waitUntil(lambda: panel.note_label.text() != "", timeout=2000)
+	assert panel.note_label.text() == "role not stored: COM6 lost"
+
+
+def test_link_counters_show_the_pc_and_the_board_side(qtbot, page, session, bridge):
+	connect(qtbot, page, Role.POLYMER)
+	panel = page.panels[Role.POLYMER]
+	click(qtbot, panel.counters_button)
+	qtbot.waitUntil(lambda: panel.note_label.text() != "", timeout=2000)
+	assert panel.note_label.text() == (
+		"PC: sent 120, retries 2, timeouts 1, late 0, bad CRC 0, abandoned 0, NACKs none · "
+		"board: dropped 0, bad CRC 0 · polls 42, missed 1, restarts 0")
+	assert ("poll_now", Role.POLYMER) in session.calls
+
+
+def test_disconnecting_turns_store_role_and_counters_off(qtbot, page):
+	connect(qtbot, page, Role.POLYMER)
+	panel = page.panels[Role.POLYMER]
+	click(qtbot, panel.disconnect_button)
+	qtbot.waitUntil(lambda: not panel.connected, timeout=2000)
+	assert not panel.store_role_button.isEnabled()
+	assert not panel.counters_button.isEnabled()

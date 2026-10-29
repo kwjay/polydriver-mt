@@ -49,6 +49,15 @@ def serial_ports() -> list[tuple[str, str]]:
 	return [(port.device, port.description) for port in sorted(list_ports.comports(), key=lambda port: port.device)]
 
 
+def counters_text(counters, report, state) -> str:
+	"""The shell's `dev stats`, on one line."""
+	nacks = ", ".join(f"{getattr(k, 'name', k)} {n}" for k, n in counters.nacks.items()) or "none"
+	return (f"PC: sent {counters.frames_sent}, retries {counters.retries}, timeouts {counters.reply_timeouts}, "
+			f"late {counters.late_replies}, bad CRC {counters.host_bad_crc_frames}, abandoned "
+			f"{counters.host_abandoned_frames}, NACKs {nacks} · board: dropped {report.dropped_frames}, bad CRC "
+			f"{report.bad_crc_frames} · polls {state.polls}, missed {state.poll_failures}, restarts {state.device_restarts}")
+
+
 class Light(QLabel):
 	def __init__(self, flag: StatusFlag):
 		super().__init__(flag.name.replace("_", " ").lower())
@@ -71,8 +80,12 @@ class BoardPanel(QGroupBox):
 		self.port_combo.setMinimumWidth(260)
 		self.connect_button = QPushButton("Connect")
 		self.disconnect_button = QPushButton("Disconnect")
-		self.disconnect_button.setEnabled(False)
+		self.store_role_button = QPushButton("Store role")
+		self.store_role_button.setToolTip(f"Store '{role.name.lower()}' in this board's EEPROM, so a swapped port is caught")
+		self.counters_button = QPushButton("Link counters")
 		self.info_label = QLabel("not connected")
+		self.note_label = QLabel("")
+		self.note_label.setWordWrap(True)
 		self.speed_label = QLabel("")
 		self.lights = {flag: Light(flag) for flag in LIGHTS}
 
@@ -81,6 +94,8 @@ class BoardPanel(QGroupBox):
 		top.addWidget(self.port_combo, 1)
 		top.addWidget(self.connect_button)
 		top.addWidget(self.disconnect_button)
+		top.addWidget(self.store_role_button)
+		top.addWidget(self.counters_button)
 		lights = QHBoxLayout()
 		for light in self.lights.values():
 			lights.addWidget(light)
@@ -90,6 +105,8 @@ class BoardPanel(QGroupBox):
 		layout.addWidget(self.info_label)
 		layout.addLayout(lights)
 		layout.addWidget(self.speed_label)
+		layout.addWidget(self.note_label)
+		self._enable(connect=True, disconnect=False)
 
 	def port(self) -> str | None:
 		return self.port_combo.currentData()
@@ -135,7 +152,8 @@ class BoardPanel(QGroupBox):
 	def _enable(self, *, connect: bool, disconnect: bool) -> None:
 		self.connect_button.setEnabled(connect)
 		self.port_combo.setEnabled(connect)
-		self.disconnect_button.setEnabled(disconnect)
+		for button in (self.disconnect_button, self.store_role_button, self.counters_button):
+			button.setEnabled(disconnect)
 
 
 class DevicesPage(QWidget):
@@ -170,6 +188,8 @@ class DevicesPage(QWidget):
 		for role, panel in self.panels.items():
 			panel.connect_button.clicked.connect(lambda _=False, role=role: self.connect_board(role))
 			panel.disconnect_button.clicked.connect(lambda _=False, role=role: self.disconnect_board(role))
+			panel.store_role_button.clicked.connect(lambda _=False, role=role: self.store_role(role))
+			panel.counters_button.clicked.connect(lambda _=False, role=role: self.show_counters(role))
 		self.connect_both_button.clicked.connect(self.connect_both)
 		self.refresh_button.clicked.connect(self.refresh_ports)
 		sink.status.connect(self._on_status, Qt.ConnectionType.QueuedConnection)
@@ -198,6 +218,35 @@ class DevicesPage(QWidget):
 		panel = self.panels[role]
 		self.bridge.run(self.session.disconnect, role, name=f"disconnect {role.name.lower()}",
 						on_result=lambda _: panel.show_disconnected())
+
+	def store_role(self, role: Role) -> None:
+		panel = self.panels[role]
+		name = role.name.lower()
+
+		def store() -> str:
+			self.session.board(role).set_role(role)
+			return self.session.state(role).port
+
+		panel.note_label.setText("")
+		self.bridge.run(store, name=f"store role {name}",
+						on_result=lambda port: panel.note_label.setText(
+							f"stored the {name} role on {port}: a swapped port is caught from now on"),
+						on_error=lambda error: panel.note_label.setText(
+							f"role not stored: {error_text(f'store role {name}', error, role)}"))
+
+	def show_counters(self, role: Role) -> None:
+		panel = self.panels[role]
+
+		def gather():
+			board = self.session.board(role)
+			report = self.session.poll_now(role).report
+			return board.link.stats, report, self.session.state(role)
+
+		panel.note_label.setText("")
+		self.bridge.run(gather, name=f"link counters {role.name.lower()}",
+						on_result=lambda found: panel.note_label.setText(counters_text(*found)),
+						on_error=lambda error: panel.note_label.setText(
+							error_text(f"link counters {role.name.lower()}", error, role)))
 
 	def events_text(self) -> str:
 		return self.events.toPlainText()

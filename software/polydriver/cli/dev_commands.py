@@ -6,14 +6,14 @@ config: a restart brings closed loop and duty 0)."""
 import csv
 import enum
 import queue
-import statistics
 from collections.abc import Iterator
 from contextlib import contextmanager, nullcontext
 from pathlib import Path
 
+from ..bench.sweep import MIN_POLLS_PER_HOLD, SWEEP_COLUMNS, sweep_row
 from ..config import comms_timeout_problem
 from ..devices import BoardStatus
-from ..protocol.constants import STATUS_FIELDS, Mode, Role, StatusFlag
+from ..protocol.constants import STATUS_FIELDS, Mode, Role
 from .base import describe
 from .board_commands import flag_names, timeout_text
 from .parsing import (
@@ -22,10 +22,7 @@ from .parsing import (
 )
 
 WATCH_COLUMNS = ["host_time_s", "role", "device_time_us_unwrapped", *STATUS_FIELDS]
-SWEEP_COLUMNS = ["duty", "mean_raw_hz", "stdev_raw_hz", "min_raw_hz", "max_raw_hz", "mean_filtered_hz", "samples",
-				"stalled_samples"]
 WAIT_S = 0.05
-MIN_POLLS_PER_HOLD = 20
 
 DEV_OPTIONS = ("mode", "pwm", "timeout", "filter", "ff", "watch", "sweep", "stats")
 
@@ -68,16 +65,6 @@ def watch_row(role: Role, status: BoardStatus, elapsed_s: float) -> list:
 	values = [getattr(status.report, name) for name in STATUS_FIELDS]
 	values = [int(v) if isinstance(v, enum.Enum) else v for v in values]
 	return [f"{elapsed_s:.4f}", role_name(role), status.device_time_us, *values]
-
-
-def sweep_row(duty: int, samples: list[BoardStatus]) -> list:
-	"""Mean over the second half of the hold, after the speed has settled."""
-	settled = samples[len(samples) // 2:]
-	raw = [s.report.raw_speed_hz for s in settled]
-	filtered = [s.report.filtered_speed_hz for s in settled]
-	stalled = sum(1 for s in settled if StatusFlag.ENCODER_STALLED in s.report.flags)
-	stdev = statistics.stdev(raw) if len(raw) > 1 else 0.0
-	return [duty, statistics.fmean(raw), stdev, min(raw), max(raw), statistics.fmean(filtered), len(settled), stalled]
 
 
 @contextmanager
