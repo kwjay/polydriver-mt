@@ -1,0 +1,28 @@
+{
+  "schema": 1,
+  "csv": "run-2026-10-29_012024.csv",
+  "started": "2026-10-29T01:20:24+01:00",
+  "ended": null,
+  "duration_s": null,
+  "result": null,
+  "note": "PID test",
+  "roles": [
+    "polymer",
+    "colour"
+  ],
+  "settings": {
+    "comms_timeout_s": 2.0,
+    "poll_hz": 10.0
+  },
+  "boards": {},
+  "job": null,
+  "run": null,
+  "fleet": [],
+  "events": [],
+  "rows": 0,
+  "weighed_mass_g": {
+    "polymer": null,
+    "colour": null
+  },
+  "clock": "t_s and *_host_s: seconds since the run started (host perf_counter); *_device_us: board micros(), unwrapped"
+}

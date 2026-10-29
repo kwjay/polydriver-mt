@@ -235,3 +235,94 @@ def test_a_run_now_call_finishing_leaves_a_busy_bridge_busy(qtbot, bridge):
 	assert changes == [True]
 	release.set()
 	qtbot.waitUntil(lambda: not bridge.busy, timeout=2000)
+
+
+def test_a_bridge_dropped_while_its_call_runs_is_freed_safely(qtbot):
+	import gc
+	bridge = Bridge()
+	started = threading.Event()
+	release = threading.Event()
+	done = threading.Event()
+
+	def work():
+		started.set()
+		release.wait(5.0)
+		done.set()
+
+	import weakref
+	freed_on = []
+	weakref.finalize(bridge, lambda: freed_on.append(threading.current_thread()))
+	bridge.run(work)
+	assert started.wait(2.0)
+	assert not bridge.close(0.05)
+	worker = bridge._worker
+	del bridge
+	gc.collect()
+	assert freed_on == [threading.main_thread()]
+	release.set()
+	assert done.wait(2.0)
+	worker.join(2.0)
+	qtbot.wait(50)
+
+
+def test_an_idle_worker_keeps_nothing_of_a_finished_call_alive(qtbot, bridge):
+	import gc
+	import weakref
+
+	class Page:
+		def show(self, value):
+			pass
+
+	page = Page()
+	freed_on = []
+	weakref.finalize(page, lambda: freed_on.append(threading.current_thread()))
+	with qtbot.waitSignal(bridge.finished, timeout=2000):
+		bridge.run(lambda: None, on_result=page.show)
+	qtbot.wait(20)
+	del page
+	gc.collect()
+	assert freed_on == [threading.main_thread()]
+
+
+def test_a_bridge_dropped_while_a_run_now_call_runs_is_freed_safely(qtbot):
+	import gc
+	import weakref
+	bridge = Bridge()
+	started = threading.Event()
+	release = threading.Event()
+	freed_on = []
+	weakref.finalize(bridge, lambda: freed_on.append(threading.current_thread()))
+
+	def work():
+		started.set()
+		release.wait(5.0)
+
+	bridge.run_now(work)
+	assert started.wait(2.0)
+	assert not bridge.close(0.05)
+	threads = list(bridge._now_threads)
+	del bridge
+	gc.collect()
+	assert freed_on == [threading.main_thread()]
+	release.set()
+	for thread in threads:
+		thread.join(2.0)
+	qtbot.wait(50)
+
+
+def test_nothing_comes_back_after_close(qtbot):
+	bridge = Bridge()
+	results = []
+	finished = []
+	bridge.finished.connect(finished.append)
+	done = threading.Event()
+
+	def work():
+		done.set()
+		return "late"
+
+	bridge.run(work, on_result=results.append)
+	assert done.wait(2.0)
+	assert bridge.close(2.0)
+	qtbot.wait(50)
+	assert results == [] and finished == []

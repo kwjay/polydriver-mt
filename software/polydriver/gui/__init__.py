@@ -1,5 +1,6 @@
 """The PolydriverMT window: `python -m polydriver.gui` or the `polydriver-gui` command, with the
-shell's --config and --sim. Closing the window closes the Session, which sends STOP to every board."""
+shell's --config and --sim. Closing the window closes the Session, which sends STOP to every board,
+then closes a recording still open."""
 
 import argparse
 import logging
@@ -15,6 +16,9 @@ from ..protocol.constants import Role
 from ..startup import log_to_file, simulate
 from .app import MainWindow
 from .bridge import Bridge, BridgeClosedError, Call
+from .devices_page import DevicesPage, serial_ports
+from .manual_page import ManualPage
+from .telemetry import QtSink
 
 __all__ = ["Bridge", "BridgeClosedError", "Call", "MainWindow", "main"]
 
@@ -44,16 +48,25 @@ def main(
 		return 2
 
 	title = TITLE
+	list_ports = serial_ports
 	if args.sim:
 		config, link_factory = simulate(config)
+		list_ports = _fixed_ports([(config.ports[role], "simulated board") for role in (Role.POLYMER, Role.COLOUR)])
 		title += (f" — simulated boards on {config.ports[Role.POLYMER]} (polymer) and "
 				f"{config.ports[Role.COLOUR]} (colour)")
 	log_handler = log_to_file(config)
 	session = Session(config, link_factory=link_factory or Link.open)
 	bridge = Bridge()
 	window: MainWindow | None = None
+	manual: ManualPage | None = None
 	try:
-		window = MainWindow(bridge, title=title)
+		sink = QtSink()
+		session.add_sink(sink)
+		devices = DevicesPage(session, config, bridge, sink, list_ports=list_ports)
+		manual = ManualPage(session, config, bridge, sink)
+		window = MainWindow(bridge, title=title, screens={"Devices": devices, "Manual": manual},
+							stop_all=session.stop_all)
+		window.stopped.connect(manual.on_stopped)
 		window.show()
 		return run(window) if run is not None else app.exec()
 	finally:
@@ -61,8 +74,14 @@ def main(
 			window.close()
 		bridge.close(CLOSE_WAIT_S)
 		session.close()
+		if manual is not None:
+			manual.shutdown()
 		logging.getLogger().removeHandler(log_handler)
 		log_handler.close()
+
+
+def _fixed_ports(ports: list[tuple[str, str]]) -> Callable[[], list[tuple[str, str]]]:
+	return lambda: ports
 
 
 def _message_box(text: str) -> None:

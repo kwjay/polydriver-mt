@@ -5,6 +5,10 @@ import pytest
 import polydriver.gui
 from polydriver.devices import Session
 from polydriver.gui import BridgeClosedError, main
+from polydriver.gui.devices_page import DevicesPage
+from polydriver.gui.manual_page import ManualPage
+from polydriver.gui.telemetry import QtSink
+from polydriver.protocol.constants import Role
 
 
 def write_config(tmp_path, text: str = ""):
@@ -22,7 +26,12 @@ def sessions(monkeypatch):
 		def __init__(self, *args, **kwargs):
 			super().__init__(*args, **kwargs)
 			self.closed = False
+			self.sinks = []
 			made.append(self)
+
+		def add_sink(self, sink):
+			self.sinks.append(sink)
+			super().add_sink(sink)
 
 		def close(self):
 			self.closed = True
@@ -100,3 +109,46 @@ def test_the_program_log_is_written_while_the_window_is_open_and_released_after(
 	text = (tmp_path / "logs" / "polydriver.log").read_text(encoding="utf-8")
 	assert "written while open" in text
 	assert logging.getLogger().handlers == handlers_before
+
+
+def test_the_window_has_the_devices_and_manual_screens_and_a_stop(qtbot, tmp_path):
+	seen = []
+
+	def run(window):
+		seen.append((type(window.screen("Devices")), type(window.screen("Manual")), window.stop_button.isEnabled()))
+		return 0
+
+	main(["--sim", "--config", str(write_config(tmp_path))], run=run)
+	assert seen == [(DevicesPage, ManualPage, True)]
+
+
+def test_with_sim_the_port_lists_hold_the_simulated_boards(qtbot, tmp_path):
+	ports = []
+
+	def run(window):
+		panels = window.screen("Devices").panels
+		ports.extend(panels[role].port() for role in (Role.POLYMER, Role.COLOUR))
+		return 0
+
+	main(["--sim", "--config", str(write_config(tmp_path))], run=run)
+	assert ports == ["SIM-POLYMER", "SIM-COLOUR"]
+
+
+def test_the_screens_hear_the_session(qtbot, tmp_path, sessions):
+	main(["--sim", "--config", str(write_config(tmp_path))], run=lambda window: 0)
+	assert [type(sink) for sink in sessions[0].sinks] == [QtSink]
+
+
+def test_a_recording_still_open_is_closed_after_the_boards_got_stop(qtbot, tmp_path, sessions):
+	order = []
+
+	class OpenLog:
+		def close(self, result=None):
+			order.append("log closed" if sessions[0].closed else "log closed before STOP")
+
+	def run(window):
+		window.screen("Manual").log = OpenLog()
+		return 0
+
+	main(["--sim", "--config", str(write_config(tmp_path))], run=run)
+	assert order == ["log closed"]
