@@ -16,8 +16,11 @@ from ..protocol.constants import Role
 from ..startup import log_to_file, simulate
 from .app import MainWindow
 from .bridge import Bridge, BridgeClosedError, Call
+from .calibration_page import CalibrationPage
 from .devices_page import DevicesPage, serial_ports
 from .manual_page import ManualPage
+from .materials_page import MaterialsPage
+from .procedures import Procedures
 from .telemetry import QtSink
 
 __all__ = ["Bridge", "BridgeClosedError", "Call", "MainWindow", "main"]
@@ -60,25 +63,29 @@ def main(
 	bridge = Bridge()
 	window: MainWindow | None = None
 	manual: ManualPage | None = None
+	procedures = Procedures()
 	try:
 		sink = QtSink()
 		session.add_sink(sink)
 		devices = DevicesPage(session, config, bridge, sink, list_ports=list_ports)
-		manual = ManualPage(session, config, bridge, sink, config_path=config_path)
+		manual = ManualPage(session, config, bridge, sink, config_path=config_path, procedures=procedures)
+		calibration = CalibrationPage(session, config, bridge, procedures=procedures)
+		materials = MaterialsPage(config, bridge)
+		materials.materials_changed.connect(calibration.set_materials)
 
 		def stop_all():
-			manual.cancel_procedures()
+			procedures.cancel_all()
 			return session.stop_all()
 
-		window = MainWindow(bridge, title=title, screens={"Devices": devices, "Manual": manual}, stop_all=stop_all)
+		screens = {"Devices": devices, "Manual": manual, "Calibration": calibration, "Materials": materials}
+		window = MainWindow(bridge, title=title, screens=screens, stop_all=stop_all)
 		window.stopped.connect(manual.on_stopped)
 		window.show()
 		return run(window) if run is not None else app.exec()
 	finally:
 		if window is not None:
 			window.close()
-		if manual is not None:
-			manual.cancel_procedures()
+		procedures.cancel_all()
 		bridge.close(CLOSE_WAIT_S)
 		session.close()
 		if manual is not None:

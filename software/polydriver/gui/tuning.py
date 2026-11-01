@@ -1,7 +1,8 @@
 """The Manual screen's Sweep and Step test tabs. Each runs a bench procedure on the chosen board on a
 thread of its own (Bridge.run_now, so a minutes-long sweep never holds up other calls) and shows
 its steps as they come. The window's STOP and "STOP this board" cancel a running procedure before
-they send STOP, so the procedure's last command can never land after it (bench.Cancel)."""
+they send STOP, so the procedure's last command can never land after it (bench.Cancel). Both go
+through the window's Procedures, so they never run alongside another screen's procedure."""
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
@@ -12,6 +13,7 @@ from PySide6.QtWidgets import (
 from ..analysis import FeedforwardFitError, StepError, fit_feedforward, parse_steps
 from ..bench import Cancel, Cancelled, measurement_path, run_step_test, run_sweep
 from .messages import error_text
+from .procedures import ProcedureBusyError
 
 STEP_COLUMNS = ("step [Hz]", "rise [s]", "overshoot [%]", "settling [s]", "steady error [Hz]")
 
@@ -33,14 +35,22 @@ class ProcedurePanel(QWidget):
 		if cancel is not None:
 			cancel.cancel()
 
-	def _begin(self) -> Cancel:
-		self._cancel = Cancel()
+	def _begin(self) -> Cancel | None:
+		"""None when another procedure runs (said in the panel)."""
+		try:
+			self._cancel = self.page.registry.begin(self.WHAT)
+		except ProcedureBusyError as error:
+			self._say(str(error))
+			return None
 		self._set_running(True)
+		self.run_button.setEnabled(True)  # the registry's signal came first and turned it off
 		return self._cancel
 
 	def _end(self) -> None:
-		self._cancel = None
+		cancel, self._cancel = self._cancel, None
 		self._set_running(False)
+		if cancel is not None:
+			self.page.registry.end(cancel)
 
 	def _set_running(self, running: bool) -> None:
 		self.running = running
@@ -63,6 +73,7 @@ class ProcedurePanel(QWidget):
 class SweepPanel(ProcedurePanel):
 	RUN_TEXT = "Run sweep"
 	STOP_TEXT = "Stop sweep"
+	WHAT = "the sweep"
 
 	def __init__(self, page, *, run=run_sweep):
 		super().__init__(page)
@@ -120,9 +131,14 @@ class SweepPanel(ProcedurePanel):
 		self.progress_label.setText(f"sweeping {len(duties)} steps of {hold_s:g} s, about "
 									f"{len(duties) * hold_s / 60:.1f} min")
 		cancel = self._begin()
+		if cancel is None:
+			return
 		page.bridge.run_now(self._run, page.session, role, duties, hold_s, path=path, cancel=cancel,
 							on_step=self._report_step, name=f"sweep {role.name.lower()}",
 							on_result=self._done, on_error=self._failed)
+
+	def _say(self, text: str) -> None:
+		self.result_label.setText(text)
 
 	def use_fit(self) -> None:
 		if self.fit is None:
@@ -161,6 +177,7 @@ class SweepPanel(ProcedurePanel):
 class StepTestPanel(ProcedurePanel):
 	RUN_TEXT = "Run step test"
 	STOP_TEXT = "Stop step test"
+	WHAT = "the step test"
 
 	def __init__(self, page, *, run=run_step_test):
 		super().__init__(page)
@@ -216,7 +233,12 @@ class StepTestPanel(ProcedurePanel):
 		self.table.setRowCount(0)
 		self.status_label.setText(f"{len(speeds) - 1} steps of {hold_s:g} s with {note[len('step test '):]}")
 		cancel = self._begin()
+		if cancel is None:
+			return
 		page.bridge.run_now(work, name=f"step test {role.name.lower()}", on_result=self._done, on_error=self._failed)
+
+	def _say(self, text: str) -> None:
+		self.status_label.setText(text)
 
 	def rows(self) -> list[list[str]]:
 		return [[self.table.item(r, c).text() for c in range(self.table.columnCount())] for r in range(self.table.rowCount())]

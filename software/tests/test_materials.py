@@ -7,6 +7,7 @@ from polydriver.calibration import CalibrationStore
 from polydriver.config import BoardSettings
 from polydriver.materials import (
 	SCHEMA,
+	InvalidMaterialError,
 	Kind,
 	Material,
 	MaterialError,
@@ -251,3 +252,42 @@ def test_a_broken_file_names_the_problem_and_the_file(tmp_path, text, message):
 	with pytest.raises(MaterialFileError, match=message) as raised:
 		load_materials(path)
 	assert str(path) in str(raised.value)
+
+
+# --- From and to table text (the window's Materials screen) ----------------------------------------
+
+def test_a_material_from_typed_text_leaves_blanks_unset():
+	from polydriver.materials import material_from_text
+	m = material_from_text({"name": " PP ", "kind": "polymer", "dispenser": "B", "flow_min_g_s": "0,5",
+							"flow_max_g_s": "3", "kp": "", "note": "grey batch"})
+	assert m == Material("PP", Kind.POLYMER, "B", flow_min_g_s=0.5, flow_max_g_s=3.0, note="grey batch")
+
+
+def test_words_that_are_not_numbers_are_listed_with_the_materials_own_problems():
+	from polydriver.materials import material_from_text
+	with pytest.raises(InvalidMaterialError) as caught:
+		material_from_text({"name": "PP", "kind": "plastic", "kp": "fast", "ki": "1", "kd": "0"})
+	problems = caught.value.problems
+	assert "kp 'fast' is not a number" in problems
+	assert any("kind 'plastic'" in p for p in problems)
+
+
+def test_a_row_with_only_number_problems_names_them():
+	from polydriver.materials import material_from_text
+	with pytest.raises(InvalidMaterialError, match="flow_max_g_s 'x' is not a number"):
+		material_from_text({"name": "PP", "kind": "polymer", "flow_min_g_s": "", "flow_max_g_s": "x"})
+
+
+def test_a_nameless_row_says_so():
+	from polydriver.materials import material_from_text
+	with pytest.raises(InvalidMaterialError, match="a material with no name"):
+		material_from_text({"name": "", "kind": "polymer"})
+
+
+def test_texts_round_trip():
+	from polydriver.materials import material_from_text, material_texts
+	m = Material("MB-red", Kind.MASTERBATCH, "A", kp=0.5, ki=2.0, kd=0.0, ff_offset_duty=128.0,
+				ff_gain_duty_per_hz=1.67, note="")
+	texts = material_texts(m)
+	assert texts["kind"] == "masterbatch" and texts["flow_min_g_s"] == "" and texts["ff_gain_duty_per_hz"] == "1.67"
+	assert material_from_text(texts) == m

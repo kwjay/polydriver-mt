@@ -5,8 +5,10 @@ import pytest
 import polydriver.gui
 from polydriver.devices import Session
 from polydriver.gui import BridgeClosedError, main
+from polydriver.gui.calibration_page import CalibrationPage
 from polydriver.gui.devices_page import DevicesPage
 from polydriver.gui.manual_page import ManualPage
+from polydriver.gui.materials_page import MaterialsPage
 from polydriver.gui.telemetry import QtSink
 from polydriver.protocol.constants import Role
 
@@ -111,15 +113,43 @@ def test_the_program_log_is_written_while_the_window_is_open_and_released_after(
 	assert logging.getLogger().handlers == handlers_before
 
 
-def test_the_window_has_the_devices_and_manual_screens_and_a_stop(qtbot, tmp_path):
+def test_the_window_has_its_screens_and_a_stop(qtbot, tmp_path):
 	seen = []
 
 	def run(window):
-		seen.append((type(window.screen("Devices")), type(window.screen("Manual")), window.stop_button.isEnabled()))
+		seen.append([type(window.screen(name)) for name in ("Devices", "Manual", "Calibration", "Materials")])
+		seen.append(window.stop_button.isEnabled())
 		return 0
 
 	main(["--sim", "--config", str(write_config(tmp_path))], run=run)
-	assert seen == [(DevicesPage, ManualPage, True)]
+	assert seen == [[DevicesPage, ManualPage, CalibrationPage, MaterialsPage], True]
+
+
+def test_the_screens_that_drive_a_board_share_one_procedure_list(qtbot, tmp_path):
+	shared = []
+
+	def run(window):
+		shared.append(window.screen("Manual").registry is window.screen("Calibration").registry)
+		return 0
+
+	main(["--sim", "--config", str(write_config(tmp_path))], run=run)
+	assert shared == [True]
+
+
+def test_saved_materials_reach_the_calibration_screen(qtbot, tmp_path):
+	from polydriver.materials import Kind, Material, MaterialRegistry
+	names = []
+
+	def run(window):
+		registry = MaterialRegistry()
+		registry.put(Material("TPU", Kind.POLYMER))
+		window.screen("Materials").materials_changed.emit(registry)
+		combo = window.screen("Calibration").material_combo
+		names.extend(combo.itemText(i) for i in range(combo.count()))
+		return 0
+
+	main(["--sim", "--config", str(write_config(tmp_path))], run=run)
+	assert names == ["TPU"]
 
 
 def test_with_sim_the_port_lists_hold_the_simulated_boards(qtbot, tmp_path):
@@ -165,8 +195,7 @@ def test_the_window_stop_cancels_a_procedure_before_it_sends_stop(qtbot, tmp_pat
 	order = []
 
 	def run(window):
-		manual = window.screen("Manual")
-		manual.cancel_procedures = lambda: order.append("cancelled")
+		window.screen("Manual").registry.cancel_all = lambda: order.append("cancelled")
 		real_stop_all = sessions[0].stop_all
 		sessions[0].stop_all = lambda: (order.append("stop"), real_stop_all())[1]
 		with qtbot.waitSignal(window.stopped, timeout=3000):
@@ -181,7 +210,7 @@ def test_closing_the_window_cancels_procedures_before_the_boards_get_stop(qtbot,
 	order = []
 
 	def run(window):
-		window.screen("Manual").cancel_procedures = lambda: order.append(
+		window.screen("Manual").registry.cancel_all = lambda: order.append(
 			"cancelled after STOP" if sessions[0].closed else "cancelled")
 		return 0
 

@@ -163,3 +163,29 @@ def test_store_role_and_link_counters_work_on_a_simulated_board(qtbot, tmp_path)
 	main(["--sim", "--config", str(write_config(tmp_path))], run=run)
 	assert notes[0] == "stored the colour role on SIM-COLOUR: a swapped port is caught from now on"
 	assert "retries" in notes[1] and "board: dropped 0, bad CRC 0" in notes[1]
+
+
+def test_a_calibration_run_on_a_simulated_board_and_its_weighing(qtbot, tmp_path):
+	from polydriver.calibration import load_calibration
+	seen = {}
+
+	def run(window):
+		connect_both(qtbot, window)
+		page = window.screen("Calibration")
+		page.material_combo.setEditText("PLA")
+		page.dispenser.setText("A")
+		page.speed.setValue(8.0)
+		page.seconds.setValue(1.5)
+		click(qtbot, page.run_button)
+		qtbot.waitUntil(lambda: page.run_button.text() == "Run" and "done" in page.progress_label.text(),
+						timeout=10000)
+		seen["progress"] = page.progress_label.text()
+		page.grams.setValue(3.0)
+		click(qtbot, page.save_button)
+		qtbot.waitUntil(lambda: "saved to" in page.message_label.text(), timeout=3000)
+		return 0
+
+	main(["--sim", "--config", str(write_config(tmp_path))], run=run)
+	assert "8 Hz for 1.5 s" in seen["progress"]
+	(m,) = load_calibration(tmp_path / "calibration.json").curve("A", "PLA").measurements
+	assert (m.speed_hz, m.duration_s, m.grams, m.method) == (8.0, 1.5, 3.0, "board-timed")

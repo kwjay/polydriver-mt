@@ -27,6 +27,7 @@ from ..telemetry import start_run_log
 from .bridge import Bridge
 from .messages import error_text, role_title
 from .telemetry import QtSink
+from .procedures import Procedures
 from .tuning import StepTestPanel, SweepPanel
 
 ROLES = (Role.POLYMER, Role.COLOUR)
@@ -76,9 +77,12 @@ def _spin(minimum: float, maximum: float, decimals: int, step: float) -> QDouble
 
 class ManualPage(QWidget):
 	def __init__(self, session, config: Config, bridge: Bridge, sink: QtSink, *, start_log=start_run_log,
-				config_path: Path | None = None, sweep=run_sweep, step_test=run_step_test):
-		"""config_path: the file "Save to config" writes; None hides the button."""
+				config_path: Path | None = None, sweep=run_sweep, step_test=run_step_test,
+				procedures: Procedures | None = None):
+		"""config_path: the file "Save to config" writes; None hides the button. procedures: the
+		window's, shared with the other screens that drive the boards."""
 		super().__init__()
+		self.registry = procedures or Procedures(self)
 		self.start_log = start_log
 		self.config_path = config_path
 		self.session = session
@@ -144,7 +148,7 @@ class ManualPage(QWidget):
 
 		self.sweep_panel = SweepPanel(self, run=sweep)
 		self.step_panel = StepTestPanel(self, run=step_test)
-		self.procedures = (self.sweep_panel, self.step_panel)
+		self.panels = (self.sweep_panel, self.step_panel)
 		self.tabs = QTabWidget()
 
 		self._lay_out()
@@ -152,8 +156,7 @@ class ManualPage(QWidget):
 		self.send_button.clicked.connect(self.send_settings)
 		self.read_button.clicked.connect(self.read_settings)
 		self.save_button.clicked.connect(self.save_settings)
-		for panel in self.procedures:
-			panel.running_changed.connect(self._procedure_running)
+		self.registry.changed.connect(self._procedure_running)
 		self.speed_button.clicked.connect(lambda: self._command(f"speed {self.speed.value():g} Hz",
 																lambda board, hz=self.speed.value(): board.set_speed(hz)))
 		self.duty_button.clicked.connect(lambda: self._command(f"duty {self.duty.value()}",
@@ -295,16 +298,15 @@ class ManualPage(QWidget):
 							on_error=lambda error: self._show_error("stop", error, role))
 
 	def cancel_procedures(self) -> None:
-		"""Before any STOP: a sweep or step test sends nothing after this returns. Thread-safe; may wait
+		"""Before any STOP: a running procedure sends nothing after this returns. Thread-safe; may wait
 		for one request in flight, so call it off the GUI thread."""
-		for panel in self.procedures:
-			panel.cancel()
+		self.registry.cancel_all()
 
 	def _procedure_running(self, running: bool) -> None:
 		for widget in (self.role_combo, self.send_button, self.speed_button, self.duty_button,
 						self.closed_loop_button, self.open_loop_button):
 			widget.setEnabled(not running)
-		for panel in self.procedures:
+		for panel in self.panels:
 			if not panel.running:
 				panel.run_button.setEnabled(not running)
 

@@ -1,3 +1,4 @@
+from .checks import curve_warnings
 from .data import (
 	DEFAULT_METHOD, SCHEMA, CalibrationError, CalibrationFileError, CalibrationStore, Curve, Measurement,
 	OldCalibrationFileError, Point, UnknownCurveError, load_calibration, save_calibration,
@@ -29,6 +30,7 @@ __all__ = [
 	"load_calibration",
 	"lowest_producing_speed",
 	"rate_for_speed",
+	"curve_warnings",
 	"save_calibration",
 	"speed_for_rate",
 ]

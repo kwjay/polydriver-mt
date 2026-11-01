@@ -114,6 +114,50 @@ class Material:
 
 
 FIELDS = tuple(f.name for f in fields(Material))
+NUMBER_FIELDS = ("flow_min_g_s", "flow_max_g_s", "kp", "ki", "kd", "ff_offset_duty", "ff_gain_duty_per_hz")
+
+
+def material_from_text(texts: dict[str, str]) -> Material:
+	"""A material from what was typed in a table row (the window's Materials screen): every value as
+	text, a blank one not set. Raises InvalidMaterialError listing every problem, words that are not
+	numbers included."""
+	problems = []
+	values: dict[str, Any] = {}
+	for name in FIELDS:
+		text = (texts.get(name) or "").strip()
+		if name in NUMBER_FIELDS:
+			if not text:
+				values[name] = None
+				continue
+			try:
+				values[name] = float(text.replace(",", "."))
+			except ValueError:
+				problems.append(f"{name} {text!r} is not a number")
+				values[name] = None
+		elif name == "dispenser":
+			values[name] = text or None
+		else:
+			values[name] = text
+	try:
+		material = Material(**values)
+	except InvalidMaterialError as error:
+		raise InvalidMaterialError(values["name"] or "a material with no name", problems + list(error.problems)) from None
+	if problems:
+		raise InvalidMaterialError(material.name, problems)
+	return material
+
+
+def material_texts(material: Material) -> dict[str, str]:
+	"""The other way: what a table row shows for a material ('' where not set)."""
+	return {name: _text(getattr(material, name)) for name in FIELDS}
+
+
+def _text(value: Any) -> str:
+	if value is None:
+		return ""
+	if isinstance(value, float):
+		return f"{value:g}"
+	return str(value)
 
 
 class MaterialRegistry:
