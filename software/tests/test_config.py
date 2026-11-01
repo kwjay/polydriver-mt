@@ -5,8 +5,8 @@ from pathlib import Path
 import pytest
 
 from polydriver.config import (
-	DEFAULT_COMMS_TIMEOUT_S, BoardSettings, Config, ConfigError, comms_timeout_problem, default_config_text, load_config,
-	save_config,
+	DEFAULT_COMMS_TIMEOUT_S, BoardSettings, Config, ConfigError, comms_timeout_problem, config_data, config_from_data,
+	default_config_text, load_config, save_config,
 	write_default_config,
 )
 from polydriver.protocol.constants import Role
@@ -217,6 +217,22 @@ def test_save_leaves_out_gains_that_are_not_set(tmp_path):
 	saved = tomllib.loads(path.read_text(encoding="utf-8"))
 	assert "kp" not in saved["board"]["polymer"]
 	assert "polymer" not in saved["ports"]
+
+
+def test_a_config_goes_to_data_and_back(tmp_path):
+	original = load_config(write(tmp_path, FULL))
+	assert config_from_data(config_data(original), tmp_path) == original
+
+
+def test_data_with_problems_names_them_all(tmp_path):
+	data = config_data(Config())
+	data["board"]["polymer"]["alpha"] = 2.0
+	data["logging"]["poll_hz"] = "fast"
+	with pytest.raises(ConfigError) as raised:
+		config_from_data(data, tmp_path)
+	text = str(raised.value)
+	assert "[board.polymer] alpha = 2" in text and "[logging] poll_hz = 'fast': must be a number" in text
+	assert text.count("\n") == 1
 
 
 def test_a_config_is_immutable():

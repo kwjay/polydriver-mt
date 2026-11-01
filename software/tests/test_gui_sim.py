@@ -208,3 +208,21 @@ def test_a_timed_run_on_a_simulated_board_stops_by_itself(qtbot, tmp_path):
 
 	main(["--sim", "--config", str(write_config(tmp_path))], run=run)
 	assert seen["text"].startswith("done: 9 Hz for 1 s")
+
+
+def test_settings_saved_on_simulated_boards_reach_them(qtbot, tmp_path):
+	path = write_config(tmp_path)
+	seen = {}
+
+	def run(window):
+		connect_both(qtbot, window)
+		page = window.screen("Settings")
+		page.fields[("board.colour", "alpha")].setText("0.25")
+		click(qtbot, page.save_button)
+		qtbot.waitUntil(lambda: "sent to the connected boards" in page.message_label.text(), timeout=5000)
+		seen["alpha"] = window.screen("Manual").session.board(Role.COLOUR).settings().alpha
+		return 0
+
+	main(["--sim", "--config", str(path)], run=run)
+	assert seen["alpha"] == 0.25
+	assert "SIM" not in path.read_text(encoding="utf-8")

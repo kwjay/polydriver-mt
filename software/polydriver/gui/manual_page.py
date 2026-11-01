@@ -273,6 +273,11 @@ class ManualPage(QWidget):
 						on_result=lambda _: self._saved(role, settings, path),
 						on_error=lambda error: self._show_error("save settings", error, role))
 
+	def use_config(self, config: Config) -> None:
+		"""The Settings screen saved and applied this config: its board settings fill the form."""
+		self.config = replace(self.config, boards=config.boards, comms_timeout_s=config.comms_timeout_s)
+		self._fill_form(self.config.boards[self.role])
+
 	def _saved(self, role: Role, settings: BoardSettings, path: Path) -> None:
 		self.config = replace(self.config, boards={**self.config.boards, role: settings})
 		self.show_note(f"saved the {role.name.lower()} settings to {path} (comments in that file are not kept)")

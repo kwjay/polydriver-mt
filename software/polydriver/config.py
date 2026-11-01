@@ -287,14 +287,28 @@ def load_config(path: Path = DEFAULT_CONFIG_PATH) -> Config:
 
 # --- Writing ------------------------------------------------------------------------
 
+def config_from_data(data: dict, base_dir: Path) -> Config:
+	"""A config from the sections of a file as dicts (the window's Settings screen builds them from
+	what was typed). Raises ConfigError listing every problem, as load_config does."""
+	config, problems = _read(data, Path(base_dir))
+	if problems:
+		raise ConfigError("\n".join(problems))
+	return config
+
+
 def save_config(config: Config, path: Path) -> None:
 	"""Writes the values only: comments in an existing file are not kept."""
+	Path(path).write_text(tomli_w.dumps(config_data(config)), encoding="utf-8")
+
+
+def config_data(config: Config) -> dict:
+	"""The sections of the file for this config, as save_config writes them; gains not set are left out."""
 	boards = {}
 	for name, role in ROLES.items():
 		settings = config.boards[role]
 		values = {key: getattr(settings, key) for key in BOARD_KEYS if getattr(settings, key) is not None}
 		boards[name] = values
-	data = {
+	return {
 		"ports": {name: config.ports[role] for name, role in ROLES.items() if config.ports[role] is not None},
 		"safety": {"comms_timeout_s": config.comms_timeout_s},
 		"board": boards,
@@ -311,7 +325,6 @@ def save_config(config: Config, path: Path) -> None:
 		"gui": {"live_plot": config.gui_live_plot},
 		"dev": {"enabled": config.dev_enabled},
 	}
-	Path(path).write_text(tomli_w.dumps(data), encoding="utf-8")
 
 
 def save_board_settings(path: Path, role: Role, settings: BoardSettings) -> Config:
