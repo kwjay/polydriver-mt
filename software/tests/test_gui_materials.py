@@ -1,7 +1,6 @@
 import json
 
 import pytest
-from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QTableWidgetItem
 
 from polydriver.config import Config

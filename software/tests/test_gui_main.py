@@ -7,9 +7,11 @@ from polydriver.devices import Session
 from polydriver.gui import BridgeClosedError, main
 from polydriver.gui.calibration_page import CalibrationPage
 from polydriver.gui.devices_page import DevicesPage
-from polydriver.gui.jobs_page import JobsPage
 from polydriver.gui.manual_page import ManualPage
+from polydriver.gui.history_page import HistoryPage
+from polydriver.gui.jobs_page import JobsPage
 from polydriver.gui.materials_page import MaterialsPage
+from polydriver.gui.run_page import RunPage
 from polydriver.gui.settings_page import SettingsPage
 from polydriver.gui.telemetry import QtSink
 from polydriver.protocol.constants import Role
@@ -119,12 +121,12 @@ def test_the_window_has_its_screens_and_a_stop(qtbot, tmp_path):
 	seen = []
 
 	def run(window):
-		seen.append([type(window.screen(name)) for name in ("Devices", "Manual", "Calibration", "Materials", "Jobs", "Settings")])
+		seen.append([type(window.screen(name)) for name in ("Devices", "Manual", "Calibration", "Materials", "Jobs", "Run", "History", "Settings")])
 		seen.append(window.stop_button.isEnabled())
 		return 0
 
 	main(["--sim", "--config", str(write_config(tmp_path))], run=run)
-	assert seen == [[DevicesPage, ManualPage, CalibrationPage, MaterialsPage, JobsPage, SettingsPage], True]
+	assert seen == [[DevicesPage, ManualPage, CalibrationPage, MaterialsPage, JobsPage, RunPage, HistoryPage, SettingsPage], True]
 
 
 def test_the_screens_that_drive_a_board_share_one_procedure_list(qtbot, tmp_path):
@@ -234,3 +236,29 @@ def test_saved_settings_reach_the_manual_form(qtbot, tmp_path):
 
 	main(["--sim", "--config", str(write_config(tmp_path))], run=run)
 	assert seen == [0.9]
+
+
+def test_the_windows_stop_stops_a_run_before_the_boards_get_stop(qtbot, tmp_path, sessions):
+	order = []
+
+	def run(window):
+		window.screen("Run").stop_now = lambda: order.append("run stopped")
+		real_stop_all = sessions[0].stop_all
+		sessions[0].stop_all = lambda: (order.append("stop"), real_stop_all())[1]
+		with qtbot.waitSignal(window.stopped, timeout=3000):
+			window.stop_everything()
+		return 0
+
+	main(["--sim", "--config", str(write_config(tmp_path))], run=run)
+	assert order[:2] == ["run stopped", "stop"]
+
+
+def test_closing_the_window_winds_up_a_run_before_the_session_closes(qtbot, tmp_path, sessions):
+	order = []
+
+	def run(window):
+		window.screen("Run").shutdown = lambda: order.append("closed after the session" if sessions[0].closed else "wound up")
+		return 0
+
+	main(["--sim", "--config", str(write_config(tmp_path))], run=run)
+	assert order == ["wound up"]

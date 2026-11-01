@@ -18,10 +18,12 @@ from .app import MainWindow
 from .bridge import Bridge, BridgeClosedError, Call
 from .calibration_page import CalibrationPage
 from .devices_page import DevicesPage, serial_ports
+from .history_page import HistoryPage
 from .jobs_page import JobsPage
 from .manual_page import ManualPage
 from .materials_page import MaterialsPage
 from .procedures import Procedures
+from .run_page import RunPage
 from .settings_page import SettingsPage
 from .telemetry import QtSink
 
@@ -65,6 +67,7 @@ def main(
 	bridge = Bridge()
 	window: MainWindow | None = None
 	manual: ManualPage | None = None
+	run_page: RunPage | None = None
 	procedures = Procedures()
 	try:
 		sink = QtSink()
@@ -77,21 +80,33 @@ def main(
 		settings = SettingsPage(session, config, bridge, config_path)
 		settings.config_saved.connect(manual.use_config)
 		jobs = JobsPage(config, bridge)
+		run_page = RunPage(session, config, bridge, sink, procedures=procedures)
+		history = HistoryPage(config, bridge)
+		run_page.run_ended.connect(history.refresh)
 
 		def stop_all():
 			procedures.cancel_all()
+			run_page.stop_now()
 			return session.stop_all()
 
 		screens = {"Devices": devices, "Manual": manual, "Calibration": calibration, "Materials": materials,
-				"Jobs": jobs, "Settings": settings}
+				"Jobs": jobs, "Run": run_page, "History": history, "Settings": settings}
 		window = MainWindow(bridge, title=title, screens=screens, stop_all=stop_all)
 		window.stopped.connect(manual.on_stopped)
+
+		def run_job(path):
+			run_page.set_job(path)
+			window.show_page("Run")
+
+		jobs.run_requested.connect(run_job)
 		window.show()
 		return run(window) if run is not None else app.exec()
 	finally:
 		if window is not None:
 			window.close()
 		procedures.cancel_all()
+		if run_page is not None:
+			run_page.shutdown()
 		bridge.close(CLOSE_WAIT_S)
 		session.close()
 		if manual is not None:

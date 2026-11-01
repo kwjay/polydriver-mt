@@ -195,7 +195,7 @@ def test_a_timed_run_on_a_simulated_board_stops_by_itself(qtbot, tmp_path):
 	seen = {}
 
 	def run(window):
-		devices = connect_both(qtbot, window)
+		connect_both(qtbot, window)
 		manual = window.screen("Manual")
 		panel = manual.timed_panel
 		panel.unit.setCurrentText("Hz")
@@ -226,3 +226,56 @@ def test_settings_saved_on_simulated_boards_reach_them(qtbot, tmp_path):
 	main(["--sim", "--config", str(path)], run=run)
 	assert seen["alpha"] == 0.25
 	assert "SIM" not in path.read_text(encoding="utf-8")
+
+
+def test_a_gradient_job_made_on_jobs_runs_on_simulated_boards(qtbot, tmp_path):
+	from polydriver.calibration import CalibrationStore, save_calibration
+	from polydriver.materials import Kind, Material, MaterialRegistry, save_materials
+	from polydriver.run import RunState
+	registry = MaterialRegistry()
+	registry.put(Material("PP", Kind.POLYMER, dispenser="A"))
+	registry.put(Material("Red", Kind.MASTERBATCH, dispenser="B"))
+	save_materials(registry, tmp_path / "materials.json")
+	store = CalibrationStore()
+	for speed_hz, grams in ((10.0, 30.0), (20.0, 60.0), (40.0, 120.0)):
+		store.add_measurement("A", "PP", speed_hz, grams, 60.0)
+	for speed_hz, grams in ((10.0, 1.2), (10.0, 1.2), (20.0, 2.4), (40.0, 4.8)):
+		store.add_measurement("B", "Red", speed_hz, grams, 60.0)
+	save_calibration(store, tmp_path / "calibration.json")
+	seen = {}
+
+	def run(window):
+		connect_both(qtbot, window)
+		jobs = window.screen("Jobs")
+		editor = jobs.editor
+		editor.new()
+		editor.name.setText("sim gradient")
+		editor.duration.setText("3")
+		editor.flow.setText("1")
+		editor.phi_start.setText("2")
+		editor.phi_end.setText("5")
+		click(qtbot, editor.save_button)
+		assert editor.message_label.text() == "saved sim gradient.json", editor.message_label.text()
+		jobs.table.selectRow(0)
+		click(qtbot, jobs.run_button)
+		assert window.current_page() == "Run"
+		page = window.screen("Run")
+		assert page.job_combo.currentText() == "sim gradient"
+		page.log_combo.setCurrentIndex(1)
+		click(qtbot, page.upload_button)
+		qtbot.waitUntil(lambda: page.runner is not None and page.runner.state is RunState.READY, timeout=10000)
+		page.confirm.setChecked(True)
+		click(qtbot, page.start_button)
+		qtbot.waitUntil(lambda: page.summary_box.isVisibleTo(page), timeout=15000)
+		seen["summary"] = page.summary_label.text()
+		seen["log"] = page.log.sidecar_path
+		page.weighed[Role.COLOUR].setValue(0.11)
+		click(qtbot, page.save_weighed_button)
+		qtbot.waitUntil(lambda: page.message_label.text().startswith("saved to"), timeout=3000)
+		return 0
+
+	main(["--sim", "--config", str(write_config(tmp_path))], run=run)
+	assert seen["summary"].startswith("DONE"), seen["summary"]
+	import json
+	sidecar = json.loads(seen["log"].read_text(encoding="utf-8"))
+	assert sidecar["result"] == "DONE" and sidecar["weighed_mass_g"]["colour"] == 0.11
