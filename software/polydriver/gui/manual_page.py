@@ -1,7 +1,11 @@
 """Manual: test one board's speed loop. Send PID gains, filter alpha and feedforward; drive the screw
 at a speed (closed loop) or a duty (open loop); STOP; watch target, raw and filtered speed and the
 duty live; record the polls to a run log (CSV + sidecar) for later analysis; save the settings to the
-config file. The Sweep and Step test tabs (gui.tuning) measure the feedforward and the loop.
+config file. The Sweep and Step test tabs (gui.tuning) measure the feedforward and the loop; the
+Timed run tab runs a speed or a rate for N seconds, timed by the board.
+
+Open loop and duty are developer controls, shown only with `[dev] enabled = true` in the config
+(the sweep still drives duties itself and puts closed loop back).
 
 The target line is what the board reports in SETTINGS after each command, not what was typed."""
 
@@ -18,7 +22,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..cli.board_commands import flag_names, settings_text
-from ..bench import run_step_test, run_sweep
+from ..bench import run_segments, run_step_test, run_sweep
 from ..config import BoardSettings, Config, save_board_settings
 from ..devices import BoardStatus
 from ..protocol.constants import Mode, Role
@@ -28,6 +32,7 @@ from .bridge import Bridge
 from .messages import error_text, role_title
 from .telemetry import QtSink
 from .procedures import Procedures
+from .timed_run_panel import TimedRunPanel
 from .tuning import StepTestPanel, SweepPanel
 
 ROLES = (Role.POLYMER, Role.COLOUR)
@@ -78,7 +83,7 @@ def _spin(minimum: float, maximum: float, decimals: int, step: float) -> QDouble
 class ManualPage(QWidget):
 	def __init__(self, session, config: Config, bridge: Bridge, sink: QtSink, *, start_log=start_run_log,
 				config_path: Path | None = None, sweep=run_sweep, step_test=run_step_test,
-				procedures: Procedures | None = None):
+				timed_run=run_segments, procedures: Procedures | None = None):
 		"""config_path: the file "Save to config" writes; None hides the button. procedures: the
 		window's, shared with the other screens that drive the boards."""
 		super().__init__()
@@ -148,7 +153,8 @@ class ManualPage(QWidget):
 
 		self.sweep_panel = SweepPanel(self, run=sweep)
 		self.step_panel = StepTestPanel(self, run=step_test)
-		self.panels = (self.sweep_panel, self.step_panel)
+		self.timed_panel = TimedRunPanel(self, run=timed_run)
+		self.panels = (self.timed_panel, self.sweep_panel, self.step_panel)
 		self.tabs = QTabWidget()
 
 		self._lay_out()
@@ -201,7 +207,11 @@ class ManualPage(QWidget):
 		duty_row.addWidget(self.duty_button)
 		drive_layout.addRow("duty (open loop)", duty_row)
 		drive_layout.addRow(self.mode_label)
+		developer = self.config.dev_enabled
+		self.open_loop_button.setVisible(developer)
+		drive_layout.setRowVisible(duty_row, developer)
 		self.tabs.addTab(drive, "Drive")
+		self.tabs.addTab(self.timed_panel, "Timed run")
 		self.tabs.addTab(self.sweep_panel, "Sweep")
 		self.tabs.addTab(self.step_panel, "Step test")
 
@@ -235,6 +245,7 @@ class ManualPage(QWidget):
 		self.role = role
 		self.role_combo.setCurrentIndex(ROLES.index(role))
 		self._fill_form(self.config.boards[role])
+		self.timed_panel._unit_chosen(self.timed_panel.unit.currentText())
 		self.message_label.setText("")
 		self.board_label.setText("")
 		self.mode_label.setText("")

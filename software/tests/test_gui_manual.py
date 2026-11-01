@@ -1,4 +1,5 @@
 import math
+from dataclasses import replace
 
 import pytest
 from PySide6.QtCore import Qt
@@ -37,7 +38,7 @@ def sink():
 CONFIG = Config(boards={
 	Role.POLYMER: BoardSettings(kp=0.5, ki=2.0, kd=0.1, alpha=0.4, ff_offset_duty=128.0, ff_gain_duty_per_hz=1.5),
 	Role.COLOUR: BoardSettings(alpha=0.8),
-})
+}, dev_enabled=True)
 
 
 class FakeLog:
@@ -325,3 +326,15 @@ def test_a_recording_that_cannot_start_says_why(qtbot, page, session, bridge):
 	assert "no board connected" in page.record_label.text()
 	assert page.record_button.text() == "Record CSV"
 	assert page.log is None
+
+
+def test_open_loop_and_duty_are_shown_only_to_developers(qtbot, session, bridge, sink):
+	page = ManualPage(session, replace(CONFIG, dev_enabled=False), bridge, sink, start_log=fake_start_log)
+	qtbot.addWidget(page)
+	page.show()
+	assert not page.open_loop_button.isVisibleTo(page) and not page.duty.isVisibleTo(page)
+	assert page.closed_loop_button.isVisibleTo(page) and page.speed.isVisibleTo(page)
+	developer = ManualPage(session, CONFIG, bridge, sink, start_log=fake_start_log)
+	qtbot.addWidget(developer)
+	developer.show()
+	assert developer.open_loop_button.isVisibleTo(developer) and developer.duty.isVisibleTo(developer)

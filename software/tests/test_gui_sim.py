@@ -189,3 +189,22 @@ def test_a_calibration_run_on_a_simulated_board_and_its_weighing(qtbot, tmp_path
 	assert "8 Hz for 1.5 s" in seen["progress"]
 	(m,) = load_calibration(tmp_path / "calibration.json").curve("A", "PLA").measurements
 	assert (m.speed_hz, m.duration_s, m.grams, m.method) == (8.0, 1.5, 3.0, "board-timed")
+
+
+def test_a_timed_run_on_a_simulated_board_stops_by_itself(qtbot, tmp_path):
+	seen = {}
+
+	def run(window):
+		devices = connect_both(qtbot, window)
+		manual = window.screen("Manual")
+		panel = manual.timed_panel
+		panel.unit.setCurrentText("Hz")
+		panel.value.setValue(9.0)
+		panel.seconds.setValue(1.0)
+		click(qtbot, panel.run_button)
+		qtbot.waitUntil(lambda: panel.progress_label.text().startswith("done"), timeout=10000)
+		seen["text"] = panel.progress_label.text()
+		return 0
+
+	main(["--sim", "--config", str(write_config(tmp_path))], run=run)
+	assert seen["text"].startswith("done: 9 Hz for 1 s")
