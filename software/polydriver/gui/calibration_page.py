@@ -10,6 +10,7 @@ from pathlib import Path
 
 import pyqtgraph as pg
 from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QFontDatabase
 from PySide6.QtWidgets import (
 	QComboBox, QDoubleSpinBox, QFormLayout, QGroupBox, QHBoxLayout, QLabel, QLineEdit, QPushButton, QTableWidget,
 	QTableWidgetItem, QVBoxLayout, QWidget,
@@ -76,6 +77,7 @@ class CalibrationPage(QWidget):
 		self.fit_label = QLabel("")
 		self.fit_label.setWordWrap(True)
 		self.fit_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+		self.fit_label.setFont(QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont))
 		self.warnings_label = QLabel("")
 		self.warnings_label.setWordWrap(True)
 		self.warnings_label.setStyleSheet("color: #ef6c00;")
