@@ -18,6 +18,7 @@ from .app import MainWindow
 from .bridge import Bridge, BridgeClosedError, Call
 from .calibration_page import CalibrationPage
 from .devices_page import DevicesPage, serial_ports
+from .jobs_page import JobsPage
 from .manual_page import ManualPage
 from .materials_page import MaterialsPage
 from .procedures import Procedures
@@ -75,13 +76,14 @@ def main(
 		materials.materials_changed.connect(calibration.set_materials)
 		settings = SettingsPage(session, config, bridge, config_path)
 		settings.config_saved.connect(manual.use_config)
+		jobs = JobsPage(config, bridge)
 
 		def stop_all():
 			procedures.cancel_all()
 			return session.stop_all()
 
 		screens = {"Devices": devices, "Manual": manual, "Calibration": calibration, "Materials": materials,
-				"Settings": settings}
+				"Jobs": jobs, "Settings": settings}
 		window = MainWindow(bridge, title=title, screens=screens, stop_all=stop_all)
 		window.stopped.connect(manual.on_stopped)
 		window.show()

@@ -7,6 +7,7 @@ from polydriver.devices import Session
 from polydriver.gui import BridgeClosedError, main
 from polydriver.gui.calibration_page import CalibrationPage
 from polydriver.gui.devices_page import DevicesPage
+from polydriver.gui.jobs_page import JobsPage
 from polydriver.gui.manual_page import ManualPage
 from polydriver.gui.materials_page import MaterialsPage
 from polydriver.gui.settings_page import SettingsPage
@@ -118,12 +119,12 @@ def test_the_window_has_its_screens_and_a_stop(qtbot, tmp_path):
 	seen = []
 
 	def run(window):
-		seen.append([type(window.screen(name)) for name in ("Devices", "Manual", "Calibration", "Materials", "Settings")])
+		seen.append([type(window.screen(name)) for name in ("Devices", "Manual", "Calibration", "Materials", "Jobs", "Settings")])
 		seen.append(window.stop_button.isEnabled())
 		return 0
 
 	main(["--sim", "--config", str(write_config(tmp_path))], run=run)
-	assert seen == [[DevicesPage, ManualPage, CalibrationPage, MaterialsPage, SettingsPage], True]
+	assert seen == [[DevicesPage, ManualPage, CalibrationPage, MaterialsPage, JobsPage, SettingsPage], True]
 
 
 def test_the_screens_that_drive_a_board_share_one_procedure_list(qtbot, tmp_path):
