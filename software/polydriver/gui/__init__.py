@@ -8,6 +8,7 @@ import sys
 from collections.abc import Callable
 from pathlib import Path
 
+import shiboken6
 from PySide6.QtWidgets import QApplication, QMessageBox
 
 from ..config import DEFAULT_CONFIG_PATH, ConfigError, load_config
@@ -111,6 +112,10 @@ def main(
 		session.close()
 		if manual is not None:
 			manual.shutdown()
+		if window is not None:
+			# Every screen goes with the window now, while the QApplication still exists: left to the
+			# interpreter's exit, the plots were torn down after Qt and the process crashed on exit.
+			shiboken6.delete(window)
 		logging.getLogger().removeHandler(log_handler)
 		log_handler.close()
 

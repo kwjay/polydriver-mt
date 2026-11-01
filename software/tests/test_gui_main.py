@@ -1,6 +1,7 @@
 import logging
 
 import pytest
+import shiboken6
 
 import polydriver.gui
 from polydriver.devices import Session
@@ -86,13 +87,14 @@ def test_a_broken_config_is_reported_and_nothing_opens(qtbot, tmp_path, sessions
 	assert runs == [] and sessions == []
 
 
-def test_closing_the_window_closes_the_session_and_the_bridge(qtbot, tmp_path, sessions):
-	windows = []
-	main(["--sim", "--config", str(write_config(tmp_path))], run=lambda window: windows.append(window) or 0)
+def test_closing_the_window_closes_the_session_and_the_bridge_and_deletes_the_window(qtbot, tmp_path, sessions):
+	windows, bridges = [], []
+	main(["--sim", "--config", str(write_config(tmp_path))],
+		run=lambda window: windows.append(window) or bridges.append(window.bridge) or 0)
 	assert [session.closed for session in sessions] == [True]
-	assert not windows[0].isVisible()
+	assert not shiboken6.isValid(windows[0])
 	with pytest.raises(BridgeClosedError):
-		windows[0].bridge.run(lambda: None)
+		bridges[0].run(lambda: None)
 
 
 def test_the_session_is_closed_even_when_the_window_fails(qtbot, tmp_path, sessions):
