@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 
 import pytest
 
@@ -99,4 +100,4 @@ def test_open_folder_opens_the_log_folder(qtbot, config, bridge):
 	opened = []
 	page = make_page(qtbot, config, bridge, opened)
 	page.open_folder_button.click()
-	assert opened[0].toLocalFile() == str(log_folder(config))
+	assert Path(opened[0].toLocalFile()) == log_folder(config)
